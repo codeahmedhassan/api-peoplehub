@@ -7,6 +7,7 @@ const required = [
     "JWT_ACCESS_SECRET",
     "JWT_REFRESH_SECRET",
     "EMAIL_VERIFY_SECRET",
+    "DOCUMENT_KEK",
 ];
 
 for (const key of required) {
@@ -26,11 +27,8 @@ export const env = {
         accessSecret: process.env.JWT_ACCESS_SECRET,
         refreshSecret: process.env.JWT_REFRESH_SECRET,
         accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
-        // The refresh JWT must be valid for the longest possible cookie lifetime,
-        // otherwise "remember me for 30 days" doesn't actually work.
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "30d",
     },
-
 
     emailVerify: {
         secret: process.env.EMAIL_VERIFY_SECRET,
@@ -55,5 +53,20 @@ export const env = {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
         from: process.env.EMAIL_FROM || "PeopleHub <no-reply@peoplehub.com>",
+    },
+
+    // -------------------------------------------------------------------
+    // Document encryption
+    // -------------------------------------------------------------------
+    documentKek: process.env.DOCUMENT_KEK, // base64, 32 bytes
+
+    // -------------------------------------------------------------------
+    // S3
+    // -------------------------------------------------------------------
+    s3: {
+        region: process.env.AWS_REGION || "us-east-1",
+        bucket: process.env.AWS_S3_BUCKET,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     },
 };
