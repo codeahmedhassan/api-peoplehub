@@ -102,3 +102,82 @@ export const createEmployeeSchema = Joi.object({
         }
         return value;
     });
+
+
+/**
+ * PATCH /employees/:id — partial update.
+ * Same field set as create, but every field is optional and no `fileMeta`
+ * is accepted (documents use POST /employees/:id/documents).
+ */
+export const updateEmployeeSchema = Joi.object({
+    // Basic
+    firstName: Joi.string().trim().min(1).max(60),
+    lastName: Joi.string().trim().min(1).max(60),
+    phone: Joi.string().trim().min(6).max(40),
+    preferredName: Joi.string().trim().max(60).allow(""),
+    gender: Joi.string().valid("Male", "Female", "Other", ""),
+    avatar: Joi.string().allow("").max(500),
+    manuallyPickedAvatar: Joi.boolean(),
+
+    // Employment
+    employmentStatus: Joi.string().valid(...EMPLOYMENT_STATUSES),
+    employmentType: Joi.string().valid(...EMPLOYMENT_TYPES),
+    designation: Joi.string().trim().max(120).allow(""),
+    department: Joi.string().valid(...DEPARTMENTS),
+    reportingManager: Joi.string().trim().max(120).allow(""),
+    joiningDate: Joi.string().isoDate(),
+    workLocation: Joi.string().valid(...WORK_LOCATIONS, ""),
+    workArrangement: Joi.string().valid(...WORK_ARRANGEMENTS, ""),
+    probationEndDate: Joi.string().isoDate().allow("", null),
+    contractEndDate: Joi.string().isoDate().allow("", null),
+    employeeCategory: Joi.string().valid(...EMPLOYEE_CATEGORIES, ""),
+
+    // Contact
+    personalEmail: Joi.string().email().max(254).allow(""),
+    dateOfBirth: Joi.string().isoDate().allow("", null),
+    residentialAddress: Joi.string().trim().max(300).allow(""),
+    city: Joi.string().trim().max(100).allow(""),
+    country: Joi.string().trim().max(100).allow(""),
+    emergencyName: Joi.string().trim().max(120).allow(""),
+    emergencyRelation: Joi.string().trim().max(60).allow(""),
+    emergencyPhone: Joi.string().trim().max(40).allow(""),
+
+    // Work & Attendance
+    workSchedule: Joi.string().trim().max(200).allow(""),
+    weeklyWorkingDays: Joi.string().trim().max(100).allow(""),
+    attendanceLocation: Joi.string().trim().max(150).allow(""),
+    attendanceMethod: Joi.string().trim().max(100).allow(""),
+    attendanceEligibility: Joi.string().valid("Eligible", "Not Eligible"),
+    overtimeEligibility: Joi.boolean(),
+    timeZone: Joi.string().trim().max(100).allow(""),
+
+    // Compensation
+    salaryAmount: Joi.number().min(0),
+    salaryCurrency: Joi.string().valid(...CURRENCIES),
+    payFrequency: Joi.string().valid(...PAY_FREQUENCIES),
+    bankAccountName: Joi.string().trim().max(150).allow(""),
+    bankAccountNumber: Joi.string().trim().max(60).allow(""),
+    bankName: Joi.string().trim().max(150).allow(""),
+    taxIdentifier: Joi.string().trim().max(60).allow(""),
+    payrollGroup: Joi.string().valid(...PAYROLL_GROUPS, ""),
+
+    // Documents & Access — only the fields the PATCH manages.
+    nationalId: Joi.string().trim().max(60).allow(""),
+    createLogin: Joi.boolean(),
+    loginEmail: Joi.string().email().max(254).allow(""),
+    systemRole: Joi.string().valid(...SYSTEM_ROLES),
+    sendInvitation: Joi.boolean(),
+
+    /**
+     * File IDs of documents the user removed. The backend will:
+     *   - delete each from S3
+     *   - remove from Employee.documents
+     */
+    removedDocumentIds: Joi.array()
+        .items(Joi.string().trim().min(1).max(64))
+        .max(20)
+        .default([]),
+})
+    .min(1) // reject empty PATCH bodies
+    .with("createLogin", ["loginEmail"])
+    .with("sendInvitation", ["loginEmail"]);

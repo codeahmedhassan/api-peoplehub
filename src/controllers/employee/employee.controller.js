@@ -2,7 +2,14 @@ import crypto from "node:crypto";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { ApiError } from "../../utils/ApiError.js";
-import { createEmployee, listEmployees, deleteEmployee } from "../../services/employee/employee.service.js";
+import {
+    createEmployee,
+    listEmployees,
+    deleteEmployee,
+    getEmployeeById,
+    addDocumentsToEmployee,
+    updateEmployee,
+} from "../../services/employee/employee.service.js";
 
 export const createEmployeeController = asyncHandler(async (req, res) => {
     if (!req.files || !Array.isArray(req.files)) {
@@ -66,4 +73,77 @@ export const deleteEmployeeController = asyncHandler(async (req, res) => {
     return res
         .status(200)
         .json(new ApiResponse(200, null, "Employee deleted"));
+});
+
+export const getEmployeeController = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const employee = await getEmployeeById(req.userId, id);
+    return res
+        .status(200)
+        .json(new ApiResponse(200, { employee: employee.toSafeJSON() }, "Employee loaded"));
+});
+
+/**
+ * POST /employees/:id/documents  (multipart/form-data)
+ * Fields:
+ *   - files: one or more file inputs (name="files")
+ *   - fileMeta: JSON array of { fileId, type, label } matched by index
+ *
+ * Requires requireAuth.
+ */
+export const addDocumentsController = asyncHandler(async (req, res) => {
+    if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+        throw ApiError.badRequest("No files provided");
+    }
+
+    // `fileMeta` was parsed by parseMultipartBody middleware into a real array
+    // at req.body.fileMeta. But for this route we don't need the wizard's
+    // `data` field, so we only look at `fileMeta`.
+    const fileMeta = Array.isArray(req.body?.fileMeta) ? req.body.fileMeta : [];
+
+    if (fileMeta.length !== req.files.length) {
+        throw ApiError.badRequest(
+            `\`fileMeta\` length (${fileMeta.length}) must match number of files (${req.files.length})`
+        );
+    }
+
+    const files = req.files.map((f, i) => ({
+        buffer: f.buffer,
+        originalname: f.originalname,
+        mimetype: f.mimetype,
+        size: f.size,
+        fileId: fileMeta[i]?.fileId || crypto.randomUUID(),
+        type: fileMeta[i]?.type,
+        label: fileMeta[i]?.label,
+    }));
+
+    const { id } = req.params;
+    const { employee, addedCount } = await addDocumentsToEmployee(req.userId, id, files);
+
+    return res
+        .status(201)
+        .json(
+            new ApiResponse(
+                201,
+                { employee: employee.toSafeJSON(), addedCount },
+                `${addedCount} document(s) uploaded`
+            )
+        );
+});
+
+export const updateEmployeeController = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { employee, removedDocumentCount } = await updateEmployee(
+        req.userId,
+        id,
+        req.body
+    );
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            { employee: employee.toSafeJSON(), removedDocumentCount },
+            "Employee updated"
+        )
+    );
 });

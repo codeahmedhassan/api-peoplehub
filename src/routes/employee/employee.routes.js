@@ -3,12 +3,18 @@ import {
     createEmployeeController,
     listEmployeesController,
     deleteEmployeeController,
+    getEmployeeController,
+    addDocumentsController,
+    updateEmployeeController,
 } from "../../controllers/employee/employee.controller.js";
 import { requireAuth } from "../../middleware/auth/auth.middleware.js";
 import { uploadEmployeeFiles } from "../../middleware/upload/multer.middleware.js";
 import { employeeCreateLimiter } from "../../middleware/rateLimit/rateLimit.middleware.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
-import { createEmployeeSchema } from "../../validators/employee/employee.validator.js";
+import {
+    createEmployeeSchema,
+    updateEmployeeSchema,
+} from "../../validators/employee/employee.validator.js";
 import { ApiError } from "../../utils/ApiError.js";
 
 const router = Router();
@@ -106,6 +112,25 @@ router.post(
 );
 
 router.get("/", requireAuth, listEmployeesController);
+router.get("/:id", requireAuth, getEmployeeController);
+
+// PATCH — partial update, JSON only
+router.patch(
+    "/:id",
+    requireAuth,
+    validate(updateEmployeeSchema),
+    updateEmployeeController
+);
+
 router.delete("/:id", requireAuth, deleteEmployeeController);
+
+router.post(
+    "/:id/documents",
+    requireAuth,
+    employeeCreateLimiter,
+    uploadEmployeeFiles,
+    parseMultipartBody,
+    addDocumentsController
+);
 
 export default router;

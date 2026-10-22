@@ -1,5 +1,6 @@
 // src/services/employee/employee.service.js
 import crypto from "node:crypto";
+import mongoose from "mongoose";
 import { Employee } from "../../model/employee/employee.model.js";
 import { EmployeeCounter } from "../../model/employee/counter.model.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
@@ -11,6 +12,7 @@ import {
     EMPLOYEE_ID_PREFIX,
     EMPLOYEE_ID_START,
     EMPLOYEE_ID_PAD,
+    MAX_FILES_PER_EMPLOYEE,
 } from "../../constants/employee.js";
 
 async function getOwnedWorkspace(userId) {
@@ -21,6 +23,28 @@ async function getOwnedWorkspace(userId) {
         );
     }
     return ws;
+}
+
+/**
+ * Resolve an employee by either its Mongo _id or its human employeeId
+ * ("EMP-00125"). Scoped to the caller's workspace.
+ */
+async function findEmployeeForUser(userId, idOrEmployeeId) {
+    const workspace = await getOwnedWorkspace(userId);
+
+    const baseFilter = { workspace: workspace._id };
+    const filter = mongoose.isValidObjectId(idOrEmployeeId)
+        ? { ...baseFilter, _id: idOrEmployeeId }
+        : { ...baseFilter, employeeId: idOrEmployeeId };
+
+    const employee = await Employee.findOne(filter);
+    if (!employee) throw ApiError.notFound("Employee not found");
+    return employee;
+}
+
+export async function getEmployeeById(userId, idOrEmployeeId) {
+    const employee = await findEmployeeForUser(userId, idOrEmployeeId);
+    return employee;
 }
 
 async function nextEmployeeId(workspaceId) {
@@ -217,14 +241,14 @@ export async function listEmployees(userId) {
     });
 }
 
-export async function deleteEmployee(userId, employeeId) {
-    const workspace = await getOwnedWorkspace(userId);
-
-    const employee = await Employee.findOne({
-        _id: employeeId,
-        workspace: workspace._id,
-    });
-    if (!employee) throw ApiError.notFound("Employee not found");
+/**
+ * Change: deleteEmployee now accepts either a Mongo _id or an employeeId
+ * ("EMP-00125"). Signature is unchanged — the id is just more flexible now.
+ *
+ * OVERWRITE the existing `deleteEmployee` function with this version.
+ */
+export async function deleteEmployee(userId, idOrEmployeeId) {
+    const employee = await findEmployeeForUser(userId, idOrEmployeeId);
 
     // Delete every encrypted blob from S3 first.
     const { deleteEncryptedBlob } = await import("../storage/s3.service.js");
@@ -232,9 +256,10 @@ export async function deleteEmployee(userId, employeeId) {
         try {
             await deleteEncryptedBlob(doc.s3Key);
         } catch (err) {
-            // Log but keep going — orphaned S3 files are less harmful than
-            // an undeletable employee. A periodic cleanup job can sweep these.
-            console.error(`[deleteEmployee] failed to delete s3 ${doc.s3Key}:`, err.message);
+            console.error(
+                `[deleteEmployee] failed to delete s3 ${doc.s3Key}:`,
+                err.message
+            );
         }
     }
 
@@ -244,9 +269,181 @@ export async function deleteEmployee(userId, employeeId) {
             const { User } = await import("../../model/auth/auth.model.js");
             await User.deleteOne({ _id: employee.linkedUser });
         } catch (err) {
-            console.error(`[deleteEmployee] failed to delete linked user:`, err.message);
+            console.error(
+                `[deleteEmployee] failed to delete linked user:`,
+                err.message
+            );
         }
     }
 
     await Employee.deleteOne({ _id: employee._id });
+}
+
+/**
+ * Add new documents to an existing employee.
+ *
+ * @param {string} userId          - authenticated user
+ * @param {string} idOrEmployeeId  - Mongo _id OR human employeeId
+ * @param {Array<{originalname, mimetype, size, buffer, fileId, type, label}>} files
+ * @returns {{ employee: object, addedCount: number }}
+ */
+export async function addDocumentsToEmployee(userId, idOrEmployeeId, files) {
+    if (!files || files.length === 0) {
+        throw ApiError.badRequest("No files provided");
+    }
+
+    const employee = await findEmployeeForUser(userId, idOrEmployeeId);
+
+    const existingCount = employee.documents?.length ?? 0;
+    if (existingCount + files.length > MAX_FILES_PER_EMPLOYEE) {
+        throw ApiError.badRequest(
+            `This employee already has ${existingCount} document(s). ` +
+            `The limit is ${MAX_FILES_PER_EMPLOYEE} per employee.`
+        );
+    }
+
+    const uploadedMeta = [];
+    try {
+        for (const f of files) {
+            const { ciphertext, iv, authTag, wrappedDek, kekVersion } =
+                encryptFile(f.buffer, {
+                    employeeId: employee._id.toString(),
+                    fileId: f.fileId,
+                });
+
+            const s3Key = `employees/${employee.workspace}/${employee._id}/${f.fileId}.enc`;
+            await uploadEncryptedBlob(s3Key, ciphertext);
+
+            uploadedMeta.push({
+                fileId: f.fileId,
+                type: f.type,
+                label: f.label,
+                fileName: f.originalname,
+                fileSize: f.size,
+                mimeType: f.mimetype,
+                s3Key,
+                iv,
+                authTag,
+                wrappedDek,
+                kekVersion,
+                uploadedBy: userId,
+            });
+        }
+
+        employee.documents = [...employee.documents, ...uploadedMeta];
+        await employee.save();
+
+        return { employee, addedCount: uploadedMeta.length };
+    } catch (err) {
+        // Roll back S3 uploads if anything fails after some succeeded
+        const { deleteEncryptedBlob } = await import("../storage/s3.service.js");
+        for (const m of uploadedMeta) {
+            try {
+                await deleteEncryptedBlob(m.s3Key);
+            } catch {
+                /* best-effort */
+            }
+        }
+        throw err;
+    }
+}
+
+/**
+ * Update an existing employee with a partial patch.
+ *
+ * @param {string} userId          - authenticated user
+ * @param {string} idOrEmployeeId  - Mongo _id OR human employeeId
+ * @param {object} patch           - validated PATCH body
+ * @returns {{ employee: object, removedDocumentCount: number }}
+ */
+export async function updateEmployee(userId, idOrEmployeeId, patch) {
+    const employee = await findEmployeeForUser(userId, idOrEmployeeId);
+
+    // ----- 1) Remove documents (S3 + array) -----
+    let removedDocumentCount = 0;
+    if (Array.isArray(patch.removedDocumentIds) && patch.removedDocumentIds.length > 0) {
+        const { deleteEncryptedBlob } = await import("../storage/s3.service.js");
+        const idsToRemove = new Set(patch.removedDocumentIds);
+
+        const toKeep = [];
+        for (const doc of employee.documents) {
+            if (idsToRemove.has(doc.fileId)) {
+                try {
+                    await deleteEncryptedBlob(doc.s3Key);
+                } catch (err) {
+                    console.error(
+                        `[updateEmployee] failed to delete s3 ${doc.s3Key}:`,
+                        err.message
+                    );
+                }
+                removedDocumentCount += 1;
+            } else {
+                toKeep.push(doc);
+            }
+        }
+        employee.documents = toKeep;
+    }
+
+    // ----- 2) Apply field updates -----
+    const setField = (key, transform) => {
+        if (patch[key] === undefined) return;
+        const value = transform ? transform(patch[key]) : patch[key];
+        employee[key] = value;
+    };
+
+    setField("firstName");
+    setField("lastName");
+    setField("phone");
+    setField("preferredName");
+    setField("gender");
+    setField("avatar");
+    setField("manuallyPickedAvatar");
+
+    setField("employmentStatus");
+    setField("employmentType");
+    setField("designation");
+    setField("department");
+    setField("reportingManager");
+    setField("joiningDate", parseDate);
+    setField("workLocation");
+    setField("workArrangement");
+    setField("probationEndDate", parseDate);
+    setField("contractEndDate", parseDate);
+    setField("employeeCategory");
+
+    setField("personalEmail");
+    setField("dateOfBirth", parseDate);
+    setField("residentialAddress");
+    setField("city");
+    setField("country");
+    setField("emergencyName");
+    setField("emergencyRelation");
+    setField("emergencyPhone");
+
+    setField("workSchedule");
+    setField("weeklyWorkingDays");
+    setField("attendanceLocation");
+    setField("attendanceMethod");
+    setField("attendanceEligibility");
+    setField("overtimeEligibility");
+    setField("timeZone");
+
+    setField("salaryAmount", (v) => Number(v));
+    setField("salaryCurrency");
+    setField("payFrequency");
+    setField("bankAccountName");
+    setField("bankAccountNumber");
+    setField("bankName");
+    setField("taxIdentifier");
+    setField("payrollGroup");
+
+    setField("nationalId");
+    setField("createLogin");
+    setField("loginEmail");
+    setField("systemRole");
+    setField("sendInvitation");
+
+    await employee.save();
+
+    return { employee, removedDocumentCount };
 }
