@@ -3,15 +3,17 @@ import { Router } from "express";
 import {
     setupWorkspaceController,
     getMyWorkspaceController,
+    updateAttendanceSettingsController,
 } from "../../controllers/workspace/workspace.controller.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import { requireAuth } from "../../middleware/auth/auth.middleware.js";
-import { setupWorkspaceSchema } from "../../validators/workspace/workspace.validator.js";
+import {
+    setupWorkspaceSchema,
+    updateAttendanceSettingsSchema,
+} from "../../validators/workspace/workspace.validator.js";
 
 const router = Router();
 
-// Both require a logged-in user.
-// The service additionally checks emailVerified.
 router.post(
     "/setup",
     requireAuth,
@@ -20,5 +22,12 @@ router.post(
 );
 
 router.get("/me", requireAuth, getMyWorkspaceController);
+
+router.patch(
+    "/attendance-settings",
+    requireAuth,
+    validate(updateAttendanceSettingsSchema),
+    updateAttendanceSettingsController
+);
 
 export default router;

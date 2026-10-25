@@ -76,3 +76,15 @@ export const SETUP_ACCENT_IDS = [
     "amber",
     "slate",
 ];
+
+// Re-export attendance constants from the attendance sub-module
+// so consumers can import them from one place if they prefer.
+export {
+    ATTENDANCE_STATUSES,
+    ATTENDANCE_SOURCES,
+    TERMINAL_STATUSES,
+    MANUAL_OVERRIDABLE_STATUSES,
+    DEFAULT_WEEKEND_DAYS,
+    ROLLUP_LOOKBACK_DAYS,
+    ROLLUP_INTERVAL_CRON,
+} from "./attendance.js";

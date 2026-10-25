@@ -9,14 +9,13 @@ import { env } from "./config/env.js";
 import { connectDB } from "./config/db.js";
 import { verifyMailer } from "./config/mailer.js";
 import { notFound, errorHandler } from "./middleware/error/error.middleware.js";
+import { startAttendanceRollupJob } from "./jobs/attendance-rollup.job.js";
 
 const app = express();
 
-// Behind a proxy in prod (Heroku/Render/Nginx) — needed for secure cookies
 app.set("trust proxy", 1);
 
 app.use(helmet());
-    
 app.use(
     cors({
         origin: [env.cors.marketingUrl, env.cors.adminUrl],
@@ -33,13 +32,13 @@ app.use(morgan(env.isProd ? "combined" : "dev"));
 
 app.use("/api/v1", routes);
 
-// 404 + error handler (must be last)
 app.use(notFound);
 app.use(errorHandler);
 
 (async () => {
     await connectDB();
     await verifyMailer();
+    startAttendanceRollupJob();
     app.listen(env.port, () => {
         console.log(`🚀 API running at http://localhost:${env.port}`);
     });

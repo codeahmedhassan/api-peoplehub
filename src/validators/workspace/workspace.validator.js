@@ -26,3 +26,29 @@ export const setupWorkspaceSchema = Joi.object({
         }).required(),
     }).required(),
 });
+
+/**
+ * PATCH /workspace/attendance-settings
+ * Partial — any subset of the three top-level fields can be sent.
+ */
+export const updateAttendanceSettingsSchema = Joi.object({
+    autoMarkAbsent: Joi.boolean(),
+
+    weekendDays: Joi.array()
+        .items(Joi.number().integer().min(0).max(6))
+        .unique()
+        .max(7),
+
+    holidays: Joi.array()
+        .items(
+            Joi.object({
+                date: Joi.string()
+                    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+                    .required(),
+                name: Joi.string().trim().min(1).max(100).required(),
+            })
+        )
+        .max(100),
+})
+    .min(1)
+    .unknown(false);

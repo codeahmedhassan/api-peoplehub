@@ -3,10 +3,6 @@ import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 
-/**
- * Upsert the workspace for the given user.
- * Also stamps user.setupCompletedAt on first completion.
- */
 export async function setupWorkspace(userId, payload) {
     const { company, teamSize, theme } = payload;
 
@@ -41,4 +37,26 @@ export async function setupWorkspace(userId, payload) {
 export async function getWorkspaceForUser(userId) {
     const workspace = await Workspace.findOne({ owner: userId });
     return workspace || null;
+}
+
+/**
+ * Update the attendance sub-document. Any field not in `patch` is preserved.
+ * `holidays` is replaced wholesale when present (the UI sends the full list).
+ */
+export async function updateAttendanceSettings(userId, patch) {
+    const workspace = await Workspace.findOne({ owner: userId });
+    if (!workspace) throw ApiError.forbidden("No workspace found");
+
+    if (patch.autoMarkAbsent !== undefined) {
+        workspace.attendance.autoMarkAbsent = patch.autoMarkAbsent;
+    }
+    if (patch.weekendDays !== undefined) {
+        workspace.attendance.weekendDays = patch.weekendDays;
+    }
+    if (patch.holidays !== undefined) {
+        workspace.attendance.holidays = patch.holidays;
+    }
+
+    await workspace.save();
+    return workspace;
 }
