@@ -11,6 +11,7 @@ import { requireAuth } from "../../middleware/auth/auth.middleware.js";
 import { noCache } from "../../middleware/cache/no-cache.middleware.js";
 import { validateQuery } from "../../middleware/validate/validate.middleware.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
+import { handleDevicePunch } from "../../controllers/attendance/device.controller.js";
 import {
     listAttendanceQuerySchema,
     summaryQuerySchema,
@@ -23,6 +24,8 @@ const router = Router();
 // All attendance endpoints change constantly (device punches, manual marks,
 // rollup jobs). None of them should ever be cached.
 router.use(noCache);
+
+router.post("/device/punch", handleDevicePunch);
 
 router.get("/", requireAuth, validateQuery(listAttendanceQuerySchema), listAttendanceController);
 router.get("/summary", requireAuth, validateQuery(summaryQuerySchema), summaryController);

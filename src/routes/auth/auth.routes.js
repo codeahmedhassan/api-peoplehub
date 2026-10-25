@@ -8,6 +8,7 @@ import {
     pendingSignupInfoController,
     logoutController,
     sessionController,
+    refreshController,
 } from "../../controllers/auth/auth.controller.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import {
@@ -54,5 +55,6 @@ router.get("/me", requireAuth, meController);
 router.get("/session", sessionController);
 
 router.post("/logout", logoutController);
+router.post("/refresh", refreshController);
 
 export default router;

@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { User } from "../../model/auth/auth.model.js";
+import { env } from "../../config/env.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
 import {
@@ -7,7 +8,7 @@ import {
     verifyEmailVerifyToken,
 } from "../../utils/emailToken.js";
 import { createSignupPendingToken } from "../../utils/signupToken.js";
-import { createAccessToken, createRefreshToken } from "../../utils/tokens.js";
+import { createAccessToken, createRefreshToken, verifyRefreshToken } from "../../utils/tokens.js";
 import { sendVerificationEmail } from "../email/email.service.js";
 
 // Dummy hash used to make failed logins constant-time.
@@ -81,7 +82,34 @@ export async function resendVerificationForUser(userId) {
 
 export async function getSessionUser(userId) {
     const user = await User.findById(userId);
-    return user || null; // hydrated doc, has toSafeJSON
+    return user || null;
+}
+
+/**
+ * Refresh a user's session using a valid refresh token.
+ * Generates a new access token and a NEW refresh token (rotation).
+ */
+export async function refreshSession(refreshToken) {
+    let decoded;
+    try {
+        decoded = verifyRefreshToken(refreshToken);
+    } catch (err) {
+        throw ApiError.unauthorized("Invalid or expired refresh token");
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+
+    // If the user's token version doesn't match the token, the session was revoked.
+    if ((decoded.ver ?? 0) !== (user.tokenVersion ?? 0)) {
+        throw ApiError.unauthorized("Session revoked");
+    }
+
+    const accessToken = createAccessToken(user);
+    // Rotate the refresh token — issue a new one on every refresh
+    const newRefreshToken = createRefreshToken(user);
+
+    return { accessToken, newRefreshToken };
 }
 
 export async function loginUser({ email, password }) {
