@@ -100,6 +100,12 @@ const workspaceSchema = new Schema(
             },
         },
 
+        currency: {
+            type: String,
+            enum: ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"],
+            default: "USD",
+        },
+
         attendance: {
             type: attendanceConfigSchema,
             default: () => ({}),
@@ -121,6 +127,7 @@ workspaceSchema.methods.toSafeJSON = function () {
         timezone: this.timezone,
         teamSize: this.teamSize,
         theme: this.theme,
+        currency: this.currency,
         attendance: {
             autoMarkAbsent: this.attendance?.autoMarkAbsent ?? true,
             weekendDays: this.attendance?.weekendDays ?? [...DEFAULT_WEEKEND_DAYS],

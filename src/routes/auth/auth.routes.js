@@ -9,6 +9,8 @@ import {
     logoutController,
     sessionController,
     refreshController,
+    verifyInviteController,
+    acceptInviteController,
 } from "../../controllers/auth/auth.controller.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import {
@@ -56,5 +58,7 @@ router.get("/session", sessionController);
 
 router.post("/logout", logoutController);
 router.post("/refresh", refreshController);
+router.post("/invite/verify", verifyInviteController);
+router.post("/invite/accept", acceptInviteController);
 
 export default router;

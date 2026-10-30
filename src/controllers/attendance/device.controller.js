@@ -3,15 +3,10 @@ import { Device } from "../../model/attendance/device.model.js";
 import { DeviceLink } from "../../model/attendance/deviceLink.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
+import { getWorkspaceOrThrow } from "../../services/workspace/workspace.service.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
-
-async function getWorkspaceOrThrow(userId) {
-    const ws = await Workspace.findOne({ owner: userId });
-    if (!ws) throw ApiError.forbidden("No workspace found");
-    return ws;
-}
 
 // --- Admin: Get all devices ---
 export const getDevices = asyncHandler(async (req, res) => {

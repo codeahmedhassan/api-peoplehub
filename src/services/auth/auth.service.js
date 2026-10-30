@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { User } from "../../model/auth/auth.model.js";
-import { env } from "../../config/env.js";
+import { verifyInviteToken } from "../../utils/inviteToken.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
 import {
@@ -146,4 +146,57 @@ export async function loginUser({ email, password }) {
     const refreshToken = createRefreshToken(user);
 
     return { user, accessToken, refreshToken };
+}
+
+export async function verifyInviteDetails(token) {
+    let decoded;
+    try {
+        decoded = verifyInviteToken(token);
+    } catch {
+        throw ApiError.badRequest("Invite link is invalid or has expired");
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) throw ApiError.badRequest("User not found");
+    if (user.status !== "pending") {
+        throw ApiError.badRequest("Invite has already been used");
+    }
+
+    return user;
+}
+
+export async function acceptInvite(token, password) {
+    let decoded;
+    try {
+        decoded = verifyInviteToken(token);
+    } catch {
+        throw ApiError.badRequest("Invite link is invalid or has expired");
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) throw ApiError.badRequest("User not found");
+    if (user.status !== "pending") {
+        throw ApiError.badRequest("Invite has already been used");
+    }
+
+    user.password = await hashPassword(password);
+    user.status = "active";
+
+    // Mark setup as complete so they skip the "create workspace" step
+    if (!user.setupCompletedAt) {
+        user.setupCompletedAt = new Date();
+    }
+
+    // If the user doesn't have a workspaceId yet, find it via the Employee record
+    if (!user.workspaceId) {
+        const { Employee } = await import("../../model/employee/employee.model.js");
+        const employee = await Employee.findOne({ linkedUser: user._id });
+        if (employee) {
+            user.workspaceId = employee.workspace;
+        }
+    }
+
+    await user.save();
+
+    return user;
 }

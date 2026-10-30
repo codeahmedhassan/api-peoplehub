@@ -56,10 +56,15 @@ const userSchema = new Schema(
             default: 0,
         },
         lastLoginAt: Date,
-        // Set once the user finishes the /setup-workspace flow.
-        // We don't put workspaceId here — the Workspace model references the user.
+        // Set once the user finishes the /setup-workspace flow or accepts an invite.
         setupCompletedAt: {
             type: Date,
+            default: null,
+        },
+        // The workspace this user belongs to (whether owner or employee)
+        workspaceId: {
+            type: Schema.Types.ObjectId,
+            ref: "Workspace",
             default: null,
         },
     },
@@ -76,7 +81,8 @@ userSchema.methods.toSafeJSON = function () {
         role: this.role,
         status: this.status,
         emailVerified: this.emailVerified,
-        setupCompletedAt: this.setupCompletedAt || null,
+        setupCompletedAt: this.setupCompletedAt,
+        workspaceId: this.workspaceId,
         createdAt: this.createdAt,
     };
 };

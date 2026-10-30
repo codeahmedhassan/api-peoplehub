@@ -129,7 +129,6 @@ const employeeSchema = new Schema(
         // Step 5 — Compensation
         // -----------------------------------------------------------------
         salaryAmount: { type: Number, required: true, min: 0 },
-        salaryCurrency: { type: String, required: true, enum: CURRENCIES },
         payFrequency: { type: String, required: true, enum: PAY_FREQUENCIES },
         bankAccountName: { type: String, trim: true, maxlength: 150, default: "" },
         bankAccountNumber: { type: String, trim: true, maxlength: 60, default: "" },
@@ -208,7 +207,6 @@ employeeSchema.methods.toSafeJSON = function () {
         timeZone: this.timeZone,
 
         salaryAmount: this.salaryAmount,
-        salaryCurrency: this.salaryCurrency,
         payFrequency: this.payFrequency,
         payrollGroup: this.payrollGroup,
         // NOTE: bankAccountNumber & taxIdentifier are intentionally NOT

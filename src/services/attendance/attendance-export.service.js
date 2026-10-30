@@ -1,14 +1,8 @@
 // src/services/attendance/attendance-export.service.js
 import XLSX from "xlsx";
 import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
-import { Workspace } from "../../model/workspace/workspace.model.js";
-import { ApiError } from "../../utils/ApiError.js";
+import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 
-async function getWorkspaceOrThrow(userId) {
-    const ws = await Workspace.findOne({ owner: userId });
-    if (!ws) throw ApiError.forbidden("No workspace found");
-    return ws;
-}
 
 /**
  * Build the list of rows for export. Does not paginate.

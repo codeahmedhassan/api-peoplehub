@@ -5,6 +5,7 @@ import {
     setupWorkspace,
     getWorkspaceForUser,
     updateAttendanceSettings,
+    getWorkspaceOrThrow
 } from "../../services/workspace/workspace.service.js";
 
 export const setupWorkspaceController = asyncHandler(async (req, res) => {

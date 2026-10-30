@@ -35,17 +35,23 @@ export async function setupWorkspace(userId, payload) {
 }
 
 export async function getWorkspaceForUser(userId) {
-    const workspace = await Workspace.findOne({ owner: userId });
-    return workspace || null;
+    const user = await User.findById(userId);
+    if (!user) return null;
+
+    // 1. Check if they own a workspace
+    const ownedWorkspace = await Workspace.findOne({ owner: userId });
+    if (ownedWorkspace) return ownedWorkspace;
+
+    // 2. Check if they are an employee linked to a workspace
+    if (user.workspaceId) {
+        return await Workspace.findById(user.workspaceId);
+    }
+
+    return null;
 }
 
-/**
- * Update the attendance sub-document. Any field not in `patch` is preserved.
- * `holidays` is replaced wholesale when present (the UI sends the full list).
- */
 export async function updateAttendanceSettings(userId, patch) {
-    const workspace = await Workspace.findOne({ owner: userId });
-    if (!workspace) throw ApiError.forbidden("No workspace found");
+    const workspace = await getWorkspaceOrThrow(userId);
 
     if (patch.autoMarkAbsent !== undefined) {
         workspace.attendance.autoMarkAbsent = patch.autoMarkAbsent;
@@ -58,5 +64,13 @@ export async function updateAttendanceSettings(userId, patch) {
     }
 
     await workspace.save();
+    return workspace;
+}
+
+export async function getWorkspaceOrThrow(userId) {
+    const workspace = await getWorkspaceForUser(userId);
+    if (!workspace) {
+        throw ApiError.forbidden("No workspace found");
+    }
     return workspace;
 }

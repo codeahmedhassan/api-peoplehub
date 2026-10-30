@@ -3,8 +3,7 @@ import mongoose from "mongoose";
 import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
-import { User } from "../../model/auth/auth.model.js";
-import { ApiError } from "../../utils/ApiError.js";
+import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 import {
     getDateInTimezone,
     getRollupDates,
@@ -17,12 +16,6 @@ import {
 // -------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------
-
-async function getWorkspaceOrThrow(userId) {
-    const ws = await Workspace.findOne({ owner: userId });
-    if (!ws) throw ApiError.forbidden("No workspace found");
-    return ws;
-}
 
 /**
  * Build the shared filter used by list / summary / export.

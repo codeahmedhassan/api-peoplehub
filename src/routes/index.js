@@ -3,7 +3,7 @@ import authRoutes from "./auth/auth.routes.js";
 import workspaceRoutes from "./workspace/workspace.routes.js";
 import employeeRoutes from "./employee/employee.routes.js";
 import attendanceRoutes from "./attendance/attendance.routes.js";
-import deviceRoutes from "./attendance/device.routes.js";
+import deviceRoutes from "./attendance/device.routes.js";``
 
 const router = Router();
 

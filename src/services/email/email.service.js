@@ -58,6 +58,54 @@ export async function sendVerificationEmail(user, token) {
     });
 }
 
+export async function sendEmployeeInviteEmail(user, token) {
+    const url = `${env.cors.marketingUrl}/accept-invite?token=${encodeURIComponent(token)}`;
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+      <body style="margin:0;padding:0;background:#f1f5f9;font-family:sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+          <tr>
+            <td align="center">
+              <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+                <tr>
+                  <td>
+                    <h1 style="margin:0 0 12px;font-size:22px;color:#0f172a;">Welcome to PeopleHub</h1>
+                    <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.6;">
+                      Hi ${escapeHtml(user.fullName)}, your HR team has created an account for you.
+                      Click the button below to set your password and get started.
+                    </p>
+                    <p style="margin:0 0 28px;">
+                      <a href="${url}"
+                        style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:9999px;font-weight:600;font-size:14px;">
+                        Set up your account
+                      </a>
+                    </p>
+                    <p style="margin:0 0 8px;font-size:12px;color:#64748b;">
+                      This link expires in 7 days.
+                    </p>
+                    <p style="margin:0;font-size:12px;color:#2563eb;word-break:break-all;">
+                      ${url}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    `;
+
+    await sendMail({
+        to: user.email,
+        subject: "You've been invited to PeopleHub",
+        html,
+        text: `Welcome to PeopleHub. Set your password here: ${url}`,
+    });
+}
+
 function escapeHtml(str = "") {
     return String(str)
         .replace(/&/g, "&amp;")

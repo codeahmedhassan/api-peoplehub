@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { EmployeeActivity } from "../../model/employee/activity.model.js";
+import { nextEmployeeId } from "../../services/employee/employee.service.js";
 import {
     createEmployee,
     listEmployees,
@@ -146,4 +148,37 @@ export const updateEmployeeController = asyncHandler(async (req, res) => {
             "Employee updated"
         )
     );
+});
+
+export const getEmployeeActivityController = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    // Use the existing service to resolve the employee ID (handles Mongo ID or EMP-00125)
+    const employee = await getEmployeeById(req.userId, id);
+
+    const activities = await EmployeeActivity.find({ employee: employee._id })
+        .populate("actor", "fullName")
+        .sort({ createdAt: -1 })
+        .limit(50) // Limit to last 50 events
+        .lean();
+
+    const result = activities.map((a) => ({
+        id: a._id.toString(),
+        type: a.type,
+        label: a.label,
+        actorName: a.actor?.fullName || "System",
+        at: a.createdAt.toISOString(),
+    }));
+
+    return res.status(200).json(new ApiResponse(200, { activities: result }, "Activity loaded"));
+});
+
+export const getNextEmployeeIdController = asyncHandler(async (req, res) => {
+    // Resolve the workspace for this user
+    const workspace = await getWorkspaceOrThrow(req.userId);
+
+    // Generate the next available ID
+    const nextId = await nextEmployeeId(workspace._id);
+
+    return res.status(200).json(new ApiResponse(200, { employeeId: nextId }, "Next ID generated"));
 });

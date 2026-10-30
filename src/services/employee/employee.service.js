@@ -3,11 +3,14 @@ import crypto from "node:crypto";
 import mongoose from "mongoose";
 import { Employee } from "../../model/employee/employee.model.js";
 import { EmployeeCounter } from "../../model/employee/counter.model.js";
+import { EmployeeActivity } from "../../model/employee/activity.model.js";
+import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { encryptFile } from "../storage/document-crypto.service.js";
 import { uploadEncryptedBlob } from "../storage/s3.service.js";
+import { createInviteToken } from "../../utils/inviteToken.js";
 import {
     EMPLOYEE_ID_PREFIX,
     EMPLOYEE_ID_START,
@@ -15,22 +18,12 @@ import {
     MAX_FILES_PER_EMPLOYEE,
 } from "../../constants/employee.js";
 
-async function getOwnedWorkspace(userId) {
-    const ws = await Workspace.findOne({ owner: userId });
-    if (!ws) {
-        throw ApiError.forbidden(
-            "You don't have a workspace yet. Complete workspace setup first."
-        );
-    }
-    return ws;
-}
-
 /**
  * Resolve an employee by either its Mongo _id or its human employeeId
  * ("EMP-00125"). Scoped to the caller's workspace.
  */
 async function findEmployeeForUser(userId, idOrEmployeeId) {
-    const workspace = await getOwnedWorkspace(userId);
+    const workspace = await getWorkspaceOrThrow(userId);
 
     const baseFilter = { workspace: workspace._id };
     const filter = mongoose.isValidObjectId(idOrEmployeeId)
@@ -47,14 +40,33 @@ export async function getEmployeeById(userId, idOrEmployeeId) {
     return employee;
 }
 
-async function nextEmployeeId(workspaceId) {
+export async function nextEmployeeId(workspaceId) {
+    // Initialize counter to START - 1 so the first increment gives START
     const counter = await EmployeeCounter.findOneAndUpdate(
         { workspace: workspaceId },
         { $inc: { sequence: 1 } },
         { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-    const seq = EMPLOYEE_ID_START + counter.sequence - 1;
-    return `${EMPLOYEE_ID_PREFIX}-${String(seq).padStart(EMPLOYEE_ID_PAD, "0")}`;
+
+    let seq = EMPLOYEE_ID_START + counter.sequence - 1;
+    let idString = `${EMPLOYEE_ID_PREFIX}-${String(seq).padStart(EMPLOYEE_ID_PAD, "0")}`;
+
+    // Loop to find an unused ID
+    let exists = await Employee.findOne({ workspace: workspaceId, employeeId: idString }).lean();
+
+    while (exists) {
+        // If it exists, increment and try again
+        const nextCounter = await EmployeeCounter.findOneAndUpdate(
+            { workspace: workspaceId },
+            { $inc: { sequence: 1 } },
+            { new: true }
+        );
+        seq = EMPLOYEE_ID_START + nextCounter.sequence - 1;
+        idString = `${EMPLOYEE_ID_PREFIX}-${String(seq).padStart(EMPLOYEE_ID_PAD, "0")}`;
+        exists = await Employee.findOne({ workspace: workspaceId, employeeId: idString }).lean();
+    }
+
+    return idString;
 }
 
 function parseDate(v) {
@@ -73,37 +85,57 @@ function parseDate(v) {
  * @returns {Promise<object>}   - saved Employee document
  */
 export async function createEmployee(userId, body, files = []) {
-    const workspace = await getOwnedWorkspace(userId);
+    const workspace = await getWorkspaceOrThrow(userId);
 
     // -------------------------------------------------------------------
     // Auto-generate employee ID
     // -------------------------------------------------------------------
-    const employeeId = await nextEmployeeId(workspace._id);
+    let employeeId = body.employeeId?.trim();
+
+    if (employeeId) {
+        // The user provided a custom ID. Check if it's already taken.
+        const existing = await Employee.findOne({
+            workspace: workspace._id,
+            employeeId
+        }).lean();
+
+        if (existing) {
+            throw ApiError.conflict(`Employee ID "${employeeId}" is already in use in this workspace.`);
+        }
+    } else {
+        // No ID provided by the user — generate the next available one.
+        employeeId = await nextEmployeeId(workspace._id, true);
+    }
 
     // -------------------------------------------------------------------
     // If a login is requested, provision a User with status "invited"
     // -------------------------------------------------------------------
     let linkedUser = null;
+    let inviteToken = null;
     if (body.createLogin && body.loginEmail) {
         const existing = await User.findOne({ email: body.loginEmail });
         if (existing) {
             throw ApiError.conflict(
-                `A user with email ${body.loginEmail} already exists. Choose a different login email.`
+                `A user with email ${body.loginEmail} already exists.`
             );
         }
-        // "invited" status means: can't log in until the invite flow exists.
-        // password is set to an unusable random bcrypt hash — no login possible.
+
         linkedUser = await User.create({
             fullName: `${body.firstName} ${body.lastName}`.trim(),
             email: body.loginEmail,
-            password: "!" + crypto.randomBytes(32).toString("hex"), // bcrypt-incompatible placeholder
+            password: "!" + crypto.randomBytes(32).toString("hex"),
             company: workspace.companyName,
-            companySize: "1-10", // best-effort — this field isn't used for employee accounts
+            companySize: "1-10",
             role: "Other",
-            status: "pending",      // pending until invite activation
-            emailVerified: false,
-            setupCompletedAt: null,
+            status: "pending", // Will become "active" after invite accepted
+            emailVerified: true, // We trust the admin's input for the email
+            setupCompletedAt: null, // They'll need to go through setup-workspace
+            systemRole: body.systemRole || "Employee", // Store the role
+            workspaceId: workspace._id,
         });
+
+        // Generate invite token
+        inviteToken = createInviteToken(linkedUser);
     }
 
     // -------------------------------------------------------------------
@@ -206,6 +238,13 @@ export async function createEmployee(userId, body, files = []) {
 
             savedEmployee.documents = uploadedMeta;
             await savedEmployee.save();
+            // Send invite email if requested
+            if (inviteToken && body.sendInvitation) {
+                const { sendEmployeeInviteEmail } = await import("../email/email.service.js");
+                sendEmployeeInviteEmail(linkedUser, inviteToken).catch((err) => {
+                    console.error("Failed to send employee invite:", err.message);
+                });
+            }
         } catch (err) {
             // Roll back any partial S3 uploads
             const { deleteEncryptedBlob } = await import("../storage/s3.service.js");
@@ -223,11 +262,20 @@ export async function createEmployee(userId, body, files = []) {
         }
     }
 
+    // Log the creation
+    await EmployeeActivity.create({
+        workspace: workspace._id,
+        employee: savedEmployee._id,
+        actor: userId,
+        type: "created",
+        label: `Employee record created`,
+    });
+
     return savedEmployee;
 }
 
 export async function listEmployees(userId) {
-    const workspace = await getOwnedWorkspace(userId);
+    const workspace = await getWorkspaceOrThrow(userId);
     const employees = await Employee.find({ workspace: workspace._id })
         .sort({ createdAt: -1 })
         .lean();
@@ -332,6 +380,18 @@ export async function addDocumentsToEmployee(userId, idOrEmployeeId, files) {
 
         employee.documents = [...employee.documents, ...uploadedMeta];
         await employee.save();
+
+        // Log document uploads
+        if (uploadedMeta.length > 0) {
+            const docNames = uploadedMeta.map((d) => d.label).join(", ");
+            await EmployeeActivity.create({
+                workspace: employee.workspace,
+                employee: employee._id,
+                actor: userId,
+                type: "document_added",
+                label: `Uploaded document(s): ${docNames}`,
+            });
+        }
 
         return { employee, addedCount: uploadedMeta.length };
     } catch (err) {
@@ -444,6 +504,69 @@ export async function updateEmployee(userId, idOrEmployeeId, patch) {
     setField("sendInvitation");
 
     await employee.save();
+
+    // ---------------------------------------------------------
+    // LOG ACTIVITIES
+    // ---------------------------------------------------------
+    const activitiesToCreate = [];
+
+    // 1. Check field changes
+    const fieldsToLog = [
+        { key: "designation", label: "Designation" },
+        { key: "department", label: "Department" },
+        { key: "employmentStatus", label: "Employment Status" },
+        { key: "salaryAmount", label: "Salary" },
+        { key: "systemRole", label: "System Role" },
+    ];
+
+    for (const field of fieldsToLog) {
+        // If the patch included this field and the value changed
+        if (patch[field.key] !== undefined && patch[field.key] !== employee[field.key]) {
+            // Format salary nicely
+            const oldVal = field.key === "salaryAmount" ? `${employee.salaryCurrency} ${employee[field.key]}` : employee[field.key];
+            const newVal = field.key === "salaryAmount" ? `${employee.salaryCurrency} ${patch[field.key]}` : patch[field.key];
+
+            // Don't show "null" or "undefined"
+            const from = oldVal || "—";
+            const to = newVal || "—";
+
+            activitiesToCreate.push({
+                workspace: employee.workspace,
+                employee: employee._id,
+                actor: userId,
+                type: "updated",
+                label: `${field.label} changed from "${from}" to "${to}"`,
+            });
+        }
+    }
+
+    // 2. Check if a login was created
+    if (patch.createLogin === true && !employee.isModified("linkedUser")) {
+        // (We only log this if it wasn't already true)
+        activitiesToCreate.push({
+            workspace: employee.workspace,
+            employee: employee._id,
+            actor: userId,
+            type: "login_created",
+            label: `System access granted (${patch.systemRole || "Employee"})`,
+        });
+    }
+
+    // 3. Check removed documents
+    if (removedDocumentCount > 0) {
+        activitiesToCreate.push({
+            workspace: employee.workspace,
+            employee: employee._id,
+            actor: userId,
+            type: "document_removed",
+            label: `Removed ${removedDocumentCount} document(s)`,
+        });
+    }
+
+    // Save activities
+    if (activitiesToCreate.length > 0) {
+        await EmployeeActivity.insertMany(activitiesToCreate);
+    }
 
     return { employee, removedDocumentCount };
 }

@@ -102,5 +102,5 @@ export const ALLOWED_EXTENSIONS = new Set([
 // Employee ID counter
 // -------------------------------------------------------------------
 export const EMPLOYEE_ID_PREFIX = "EMP";
-export const EMPLOYEE_ID_START = 125;
+export const EMPLOYEE_ID_START = 1;
 export const EMPLOYEE_ID_PAD = 5;

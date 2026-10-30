@@ -6,6 +6,8 @@ import {
     getEmployeeController,
     addDocumentsController,
     updateEmployeeController,
+    getEmployeeActivityController,
+    getNextEmployeeIdController,
 } from "../../controllers/employee/employee.controller.js";
 import { requireAuth } from "../../middleware/auth/auth.middleware.js";
 import { uploadEmployeeFiles } from "../../middleware/upload/multer.middleware.js";
@@ -25,15 +27,6 @@ const router = Router();
  * The frontend sends two special fields:
  *   - `data`:      JSON string of the wizard payload
  *   - `fileMeta`:  JSON string of an array of per-file metadata
- *
- * This middleware:
- *   1. Parses both into JavaScript values.
- *   2. Replaces `req.body` with the parsed `data` object.
- *   3. Attaches the parsed `fileMeta` array at `req.body.fileMeta`
- *      so the Joi validator can check it AND the controller can use it.
- *
- * This is the ONLY place these two fields are parsed. The controller
- * MUST NOT re-parse them.
  */
 function parseMultipartBody(req, _res, next) {
     try {
@@ -92,7 +85,6 @@ function parseMultipartBody(req, _res, next) {
         }
 
         // ---- build the final body the controller will see ----
-        // `data` fields flat, `fileMeta` as an array.
         req.body = { ...parsed, fileMeta };
 
         next();
@@ -112,6 +104,11 @@ router.post(
 );
 
 router.get("/", requireAuth, listEmployeesController);
+
+// ⚠️ IMPORTANT: This must be defined BEFORE `/:id` so Express 
+// doesn't treat "next-id" as an employee ID.
+router.get("/next-id", requireAuth, getNextEmployeeIdController);
+
 router.get("/:id", requireAuth, getEmployeeController);
 
 // PATCH — partial update, JSON only
@@ -132,5 +129,7 @@ router.post(
     parseMultipartBody,
     addDocumentsController
 );
+
+router.get("/:id/activity", requireAuth, getEmployeeActivityController);
 
 export default router;

@@ -13,8 +13,10 @@ import {
     getSessionUser,
     loginUser,
     refreshSession,
+    verifyInviteDetails,
+    acceptInvite,
 } from "../../services/auth/auth.service.js";
-import { verifyAccessToken } from "../../utils/tokens.js";
+import { verifyAccessToken, createAccessToken, createRefreshToken } from "../../utils/tokens.js";
 import { COOKIE_NAMES } from "../../constants/index.js";
 
 export const signup = asyncHandler(async (req, res) => {
@@ -196,4 +198,27 @@ export const loginController = asyncHandler(async (req, res) => {
     return res
         .status(200)
         .json(new ApiResponse(200, { user: user.toSafeJSON() }, "Signed in"));
+});
+
+export const verifyInviteController = asyncHandler(async (req, res) => {
+    const user = await verifyInviteDetails(req.body.token);
+    return res.status(200).json(new ApiResponse(200, {
+        user: {
+            fullName: user.fullName,
+            email: user.email,
+        }
+    }, "Invite valid"));
+});
+
+export const acceptInviteController = asyncHandler(async (req, res) => {
+    const user = await acceptInvite(req.body.token, req.body.password);
+
+    // Log them in immediately after they set their password
+    const accessToken = createAccessToken(user);
+    const refreshToken = createRefreshToken(user);
+    setAuthCookies(res, { accessToken, refreshToken, rememberMe: true });
+
+    return res.status(200).json(new ApiResponse(200, {
+        user: user.toSafeJSON(),
+    }, "Invite accepted. Welcome!"));
 });

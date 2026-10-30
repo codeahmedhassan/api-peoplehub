@@ -12,8 +12,8 @@ export const listAttendanceQuerySchema = Joi.object({
     status: Joi.string().valid(...ATTENDANCE_STATUSES),
     q: Joi.string().trim().max(120).allow(""),
     page: Joi.number().integer().min(1).default(1),
-    limit: Joi.number().integer().min(1).max(200).default(50),
-}).with("to", "from"); // if `to` is present, `from` is required
+    limit: Joi.number().integer().min(1).max(1000).default(50),
+}).with("to", "from");
 
 export const summaryQuerySchema = Joi.object({
     from: dateString.required(),
