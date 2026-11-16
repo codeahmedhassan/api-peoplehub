@@ -19,8 +19,9 @@ const optionalString = (max = 200) =>
 
 export const createEmployeeSchema = Joi.object({
     // --- Basic ---
+    employeeId: optionalString(60),
     firstName: Joi.string().trim().min(1).max(60).required(),
-    lastName: Joi.string().trim().min(1).max(60).required(),
+    lastName: Joi.string().trim().max(60).allow("", null).optional().default(""),
     phone: Joi.string().trim().min(6).max(40).required(),
     preferredName: optionalString(60),
     gender: Joi.string().valid("Male", "Female", "Other", "").default(""),
@@ -31,27 +32,36 @@ export const createEmployeeSchema = Joi.object({
     employmentStatus: Joi.string().valid(...EMPLOYMENT_STATUSES).required(),
     employmentType: Joi.string().valid(...EMPLOYMENT_TYPES).required(),
     designation: optionalString(120),
-    department: Joi.string().valid(...DEPARTMENTS).required(),
+    branch: optionalString(120),
+    department: Joi.string().trim().min(1).max(120).required(),
     reportingManager: optionalString(120),
     joiningDate: Joi.string().isoDate().required(),
-    workLocation: Joi.string().valid(...WORK_LOCATIONS, "").default(""),
+    workLocation: optionalString(120),
     workArrangement: Joi.string().valid(...WORK_ARRANGEMENTS, "").default(""),
-    probationEndDate: Joi.string().isoDate().allow("", null).default(null),
-    contractEndDate: Joi.string().isoDate().allow("", null).default(null),
+    probationStatus: Joi.string().valid("In Probation", "Passed", "Extended", "Not Applicable", "").default("In Probation"),
+    probationEndDate: Joi.alternatives().try(Joi.string().isoDate(), Joi.date(), Joi.string().allow(""), Joi.valid(null)).default(null),
+    contractEndDate: Joi.alternatives().try(Joi.string().isoDate(), Joi.date(), Joi.string().allow(""), Joi.valid(null)).default(null),
     employeeCategory: Joi.string().valid(...EMPLOYEE_CATEGORIES, "").default(""),
 
     // --- Contact ---
-    personalEmail: Joi.string().email().max(254).allow("").default(""),
-    dateOfBirth: Joi.string().isoDate().allow("", null).default(null),
+    personalEmail: Joi.string().email().max(254).allow("", null).default(""),
+    workEmail: Joi.string().email().max(254).allow("", null).default(""),
+    dateOfBirth: Joi.alternatives().try(Joi.string().isoDate(), Joi.date(), Joi.string().allow(""), Joi.valid(null)).default(null),
     residentialAddress: optionalString(300),
     city: optionalString(100),
     country: optionalString(100),
     emergencyName: optionalString(120),
     emergencyRelation: optionalString(60),
     emergencyPhone: optionalString(40),
+    referenceName: optionalString(120),
+    referenceRelation: optionalString(60),
+    referencePhone: optionalString(40),
+    referenceAddress: optionalString(300),
 
     // --- Work & Attendance ---
-    workSchedule: optionalString(200),
+    workSchedule: Joi.string().trim().max(200).allow("").default("8 hours"),
+    workingHours: Joi.number().min(1).max(24).optional(),
+    workShift: optionalString(100),
     weeklyWorkingDays: optionalString(100),
     attendanceLocation: optionalString(150),
     attendanceMethod: optionalString(100),
@@ -60,19 +70,25 @@ export const createEmployeeSchema = Joi.object({
     timeZone: optionalString(100),
 
     // --- Compensation ---
-    salaryAmount: Joi.number().positive().required(),
-    salaryCurrency: Joi.string().valid(...CURRENCIES).required(),
+    salaryAmount: Joi.number().min(0).required(),
+    salaryCurrency: Joi.string().valid(...CURRENCIES).default("USD"),
     payFrequency: Joi.string().valid(...PAY_FREQUENCIES).required(),
     bankAccountName: optionalString(150),
     bankAccountNumber: optionalString(60),
     bankName: optionalString(150),
     taxIdentifier: optionalString(60),
-    payrollGroup: Joi.string().valid(...PAYROLL_GROUPS, "").default(""),
+    payrollGroup: optionalString(120),
+
+    // --- Qualifications & Professional Background ---
+    education: Joi.array().items(Joi.object().unknown(true)).default([]),
+    experience: Joi.array().items(Joi.object().unknown(true)).default([]),
+    certificates: Joi.array().items(Joi.object().unknown(true)).default([]),
+    permissions: Joi.object().unknown(true).optional().default({}),
 
     // --- Documents & Access ---
-    nationalId: optionalString(60),
+    nationalId: Joi.string().trim().min(1).max(60).required(),
     createLogin: Joi.boolean().default(false),
-    loginEmail: Joi.string().email().max(254).allow("").default(""),
+    loginEmail: Joi.string().email().max(254).allow("", null).default(""),
     systemRole: Joi.string().valid(...SYSTEM_ROLES).default("Employee"),
     sendInvitation: Joi.boolean().default(false),
 
@@ -85,23 +101,20 @@ export const createEmployeeSchema = Joi.object({
                 label: Joi.string().trim().min(1).max(100).required(),
             })
         )
-        .max(20)
+        .max(5)
         .default([]),
-}).with("createLogin", ["loginEmail"])
-    .with("sendInvitation", ["loginEmail"])
-    .custom((value, helpers) => {
-        if (value.createLogin && !value.loginEmail) {
-            return helpers.error("any.custom", {
-                message: "loginEmail is required when createLogin is true",
-            });
+    draftDocuments: Joi.array().items(Joi.object().unknown(true)).max(5).default([]),
+}).custom((value, helpers) => {
+    if (!value.createLogin) {
+        value.sendInvitation = false;
+        value.loginEmail = "";
+    } else {
+        if (!value.loginEmail) {
+            return helpers.message("Login email is required when Create Login is enabled");
         }
-        if (value.sendInvitation && !value.loginEmail) {
-            return helpers.error("any.custom", {
-                message: "loginEmail is required when sendInvitation is true",
-            });
-        }
-        return value;
-    });
+    }
+    return value;
+});
 
 
 /**
@@ -123,17 +136,20 @@ export const updateEmployeeSchema = Joi.object({
     employmentStatus: Joi.string().valid(...EMPLOYMENT_STATUSES),
     employmentType: Joi.string().valid(...EMPLOYMENT_TYPES),
     designation: Joi.string().trim().max(120).allow(""),
-    department: Joi.string().valid(...DEPARTMENTS),
+    branch: optionalString(120),
+    department: Joi.string().trim().min(1).max(120).allow(""),
     reportingManager: Joi.string().trim().max(120).allow(""),
     joiningDate: Joi.string().isoDate(),
-    workLocation: Joi.string().valid(...WORK_LOCATIONS, ""),
+    workLocation: optionalString(120),
     workArrangement: Joi.string().valid(...WORK_ARRANGEMENTS, ""),
+    probationStatus: Joi.string().valid("In Probation", "Passed", "Extended", "Not Applicable", "").allow(""),
     probationEndDate: Joi.string().isoDate().allow("", null),
     contractEndDate: Joi.string().isoDate().allow("", null),
     employeeCategory: Joi.string().valid(...EMPLOYEE_CATEGORIES, ""),
 
     // Contact
     personalEmail: Joi.string().email().max(254).allow(""),
+    workEmail: Joi.string().email().max(254).allow("", null),
     dateOfBirth: Joi.string().isoDate().allow("", null),
     residentialAddress: Joi.string().trim().max(300).allow(""),
     city: Joi.string().trim().max(100).allow(""),
@@ -141,9 +157,15 @@ export const updateEmployeeSchema = Joi.object({
     emergencyName: Joi.string().trim().max(120).allow(""),
     emergencyRelation: Joi.string().trim().max(60).allow(""),
     emergencyPhone: Joi.string().trim().max(40).allow(""),
+    referenceName: Joi.string().trim().max(120).allow(""),
+    referenceRelation: Joi.string().trim().max(60).allow(""),
+    referencePhone: Joi.string().trim().max(40).allow(""),
+    referenceAddress: Joi.string().trim().max(300).allow(""),
 
     // Work & Attendance
     workSchedule: Joi.string().trim().max(200).allow(""),
+    workingHours: Joi.number().min(1).max(24).optional(),
+    workShift: Joi.string().trim().max(100).allow(""),
     weeklyWorkingDays: Joi.string().trim().max(100).allow(""),
     attendanceLocation: Joi.string().trim().max(150).allow(""),
     attendanceMethod: Joi.string().trim().max(100).allow(""),
@@ -154,12 +176,23 @@ export const updateEmployeeSchema = Joi.object({
     // Compensation
     salaryAmount: Joi.number().min(0),
     salaryCurrency: Joi.string().valid(...CURRENCIES),
+    salaryChangeReason: optionalString(200),
     payFrequency: Joi.string().valid(...PAY_FREQUENCIES),
     bankAccountName: Joi.string().trim().max(150).allow(""),
     bankAccountNumber: Joi.string().trim().max(60).allow(""),
     bankName: Joi.string().trim().max(150).allow(""),
     taxIdentifier: Joi.string().trim().max(60).allow(""),
-    payrollGroup: Joi.string().valid(...PAYROLL_GROUPS, ""),
+    payrollGroup: Joi.string().trim().max(120).allow(""),
+
+    // Confidential
+    confidentialNotes: optionalString(2000),
+    backgroundCheckStatus: Joi.string().valid("Verified", "Pending", "Failed", "In Progress", "").allow(""),
+
+    // Qualifications & Background
+    education: Joi.array().items(Joi.object().unknown(true)),
+    experience: Joi.array().items(Joi.object().unknown(true)),
+    certificates: Joi.array().items(Joi.object().unknown(true)),
+    permissions: Joi.object().unknown(true),
 
     // Documents & Access — only the fields the PATCH manages.
     nationalId: Joi.string().trim().max(60).allow(""),
@@ -175,8 +208,7 @@ export const updateEmployeeSchema = Joi.object({
      */
     removedDocumentIds: Joi.array()
         .items(Joi.string().trim().min(1).max(64))
-        .max(20)
-        .default([]),
+        .max(5).default([]),
 })
     .min(1) // reject empty PATCH bodies
     .with("createLogin", ["loginEmail"])

@@ -14,7 +14,7 @@ export const EMPLOYMENT_TYPES = [
     "Casual / On Call",
 ];
 
-export const EMPLOYMENT_STATUSES = ["Active", "Probation", "On Leave", "Inactive"];
+export const EMPLOYMENT_STATUSES = ["Active", "Probation", "On Leave", "Inactive", "Resigned", "Terminated", "Suspended"];
 
 export const WORK_ARRANGEMENTS = ["On-site", "Remote", "Hybrid"];
 
@@ -22,7 +22,7 @@ export const PAY_FREQUENCIES = ["Monthly", "Semi-Monthly", "Bi-Weekly", "Weekly"
 
 export const CURRENCIES = ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"];
 
-export const SYSTEM_ROLES = ["Admin", "Manager", "HR", "Employee", "Viewer"];
+export const SYSTEM_ROLES = ["Admin", "Manager", "HR", "Employee", "Viewer", "Custom"];
 
 export const DEPARTMENTS = [
     "Engineering",
@@ -70,7 +70,7 @@ export const DOCUMENT_TYPES = [
 // Upload constraints
 // -------------------------------------------------------------------
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
-export const MAX_FILES_PER_EMPLOYEE = 20;
+export const MAX_FILES_PER_EMPLOYEE = 5;
 
 // MIME whitelist (server-side — don't trust the frontend accept attr)
 export const ALLOWED_MIME_TYPES = new Set([

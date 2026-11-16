@@ -1,7 +1,7 @@
 {
-  "name": "peoplehub-api",
+  "name": "corpilance-api",
   "version": "1.0.0",
-  "description": "PeopleHub HR Management System API",
+  "description": "CorpiLance HR Management System API",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { User } from "../../model/auth/auth.model.js";
 import { verifyInviteToken } from "../../utils/inviteToken.js";
@@ -8,8 +9,15 @@ import {
     verifyEmailVerifyToken,
 } from "../../utils/emailToken.js";
 import { createSignupPendingToken } from "../../utils/signupToken.js";
-import { createAccessToken, createRefreshToken, verifyRefreshToken } from "../../utils/tokens.js";
-import { sendVerificationEmail } from "../email/email.service.js";
+import {
+    createAccessToken,
+    createRefreshToken,
+    verifyRefreshToken,
+    create2FAPendingToken,
+    verify2FAPendingToken,
+} from "../../utils/tokens.js";
+import { sendVerificationEmail, send2FACodeEmail } from "../email/email.service.js";
+import { parseUserAgent, parseClientIp, maskEmail, upsertActiveSession } from "../../utils/userAgent.js";
 
 // Dummy hash used to make failed logins constant-time.
 // Generated from "not-a-real-password" with bcrypt cost 12.
@@ -20,8 +28,6 @@ export async function registerUser(payload) {
 
     const existing = await User.findOne({ email }).lean();
     if (existing) {
-        // If they signed up but never verified, we still reject to prevent enumeration.
-        // (You could optionally resend, but that leaks existence. Keep it simple and consistent.)
         throw ApiError.conflict("An account with this email already exists");
     }
 
@@ -65,8 +71,9 @@ export async function verifyEmail(token) {
         await user.save();
     }
 
-    const accessToken = createAccessToken(user);
-    const refreshToken = createRefreshToken(user);
+    const sessionId = crypto.randomUUID();
+    const accessToken = createAccessToken(user, sessionId);
+    const refreshToken = createRefreshToken(user, sessionId);
 
     return { user, accessToken, refreshToken };
 }
@@ -93,7 +100,7 @@ export async function refreshSession(refreshToken) {
     let decoded;
     try {
         decoded = verifyRefreshToken(refreshToken);
-    } catch (err) {
+    } catch {
         throw ApiError.unauthorized("Invalid or expired refresh token");
     }
 
@@ -105,27 +112,62 @@ export async function refreshSession(refreshToken) {
         throw ApiError.unauthorized("Session revoked");
     }
 
-    const accessToken = createAccessToken(user);
-    // Rotate the refresh token — issue a new one on every refresh
-    const newRefreshToken = createRefreshToken(user);
+    if (user.status === "inactive" || user.status === "suspended") {
+        throw ApiError.forbidden("Your account has been deactivated or suspended");
+    }
 
-    return { accessToken, newRefreshToken };
+    const rememberMe = Boolean(decoded.rem);
+    const sessionId = decoded.sid || crypto.randomUUID();
+    const accessToken = createAccessToken(user, sessionId);
+    // Rotate the refresh token — issue a new one on every refresh, preserving rememberMe
+    const newRefreshToken = createRefreshToken(user, sessionId, rememberMe);
+
+    return { accessToken, refreshToken: newRefreshToken, newRefreshToken, user, rememberMe };
 }
 
-export async function loginUser({ email, password }) {
-    // Load with password (field has select:false by default).
-    const user = await User.findOne({ email }).select("+password");
+export async function loginUser({ email, password, req = null, rememberMe = false }) {
+    // Load with password & 2FA fields
+    const user = await User.findOne({ email }).select("+password +twoFactorCode +twoFactorExpires +twoFactorAttempts");
 
     // Timing-safe: if no user, still run bcrypt.compare against a dummy hash
-    // so response time is the same as a wrong-password attempt.
     if (!user) {
         await bcrypt.compare(password, DUMMY_HASH).catch(() => { });
         throw ApiError.unauthorized("Invalid email or password");
     }
 
+    // Revoked password check (password removed on termination/resignation/suspension)
+    if (!user.password) {
+        await bcrypt.compare(password, DUMMY_HASH).catch(() => { });
+        throw ApiError.forbidden("Your account access has been revoked. No active password exists for this account.");
+    }
+
+    if (user.status === "suspended") {
+        throw ApiError.forbidden("Your account has been suspended");
+    }
+    if (user.status === "inactive") {
+        throw ApiError.forbidden("Your account has been deactivated. Please contact your organization's HR.");
+    }
+
+    // Check linked employee standing
+    try {
+        const { Employee } = await import("../../model/employee/employee.model.js");
+        const linkedEmployee = await Employee.findOne({
+            $or: [
+                { linkedUser: user._id },
+                { loginEmail: user.email },
+                { workEmail: user.email },
+            ],
+        }).select("employmentStatus").lean();
+
+        if (linkedEmployee && ["Terminated", "Resigned", "Suspended"].includes(linkedEmployee.employmentStatus)) {
+            throw ApiError.forbidden(`Your access has been revoked because your employment status is ${linkedEmployee.employmentStatus}. Please contact HR.`);
+        }
+    } catch (empCheckErr) {
+        if (empCheckErr instanceof ApiError) throw empCheckErr;
+    }
+
     const ok = await verifyPassword(password, user.password);
     if (!ok) {
-        // Same message as "user doesn't exist" — prevents enumeration.
         throw ApiError.unauthorized("Invalid email or password");
     }
 
@@ -134,18 +176,162 @@ export async function loginUser({ email, password }) {
         return { requiresVerification: true, user, pendingToken };
     }
 
-    if (user.status === "suspended") {
-        throw ApiError.forbidden("Your account has been suspended");
+    // Check if Two-Factor Authentication is enabled for this specific user
+    if (user.twoFactorEnabled) {
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        user.twoFactorCode = code;
+        user.twoFactorExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        user.twoFactorAttempts = 0;
+        await user.save();
+
+        const pendingToken = create2FAPendingToken(user, rememberMe);
+
+        // Send OTP via email
+        send2FACodeEmail({
+            to: user.email,
+            userName: user.fullName,
+            code,
+        }).catch((err) => {
+            console.error("Failed to send 2FA code email:", err.message);
+        });
+
+        return {
+            requires2FA: true,
+            user,
+            pendingToken,
+            destination: maskEmail(user.email),
+        };
     }
 
-    // Record the login for security auditing.
+    // Standard login (2FA not enabled)
+    const sessionId = crypto.randomUUID();
+    const { browser, os, device } = parseUserAgent(req?.headers?.["user-agent"]);
+    const { ip, location } = parseClientIp(req || {});
+
     user.lastLoginAt = new Date();
+    user.activeSessions = upsertActiveSession(user.activeSessions, {
+        sessionId,
+        device,
+        browser,
+        os,
+        ip,
+        location,
+    });
+
     await user.save();
 
-    const accessToken = createAccessToken(user);
-    const refreshToken = createRefreshToken(user);
+    const accessToken = createAccessToken(user, sessionId);
+    const refreshToken = createRefreshToken(user, sessionId, rememberMe);
 
-    return { user, accessToken, refreshToken };
+    return { user, accessToken, refreshToken, sessionId, rememberMe: Boolean(rememberMe) };
+}
+
+export async function verifyTwoFactor({ token, code, req = null, rememberMe = false }) {
+    if (!token) {
+        throw ApiError.unauthorized("2FA session expired. Please sign in again.");
+    }
+    if (!code) {
+        throw ApiError.badRequest("Verification code is required");
+    }
+
+    let decoded;
+    try {
+        decoded = verify2FAPendingToken(token);
+    } catch {
+        throw ApiError.unauthorized("2FA session expired. Please sign in again.");
+    }
+
+    const user = await User.findById(decoded.sub).select("+twoFactorCode +twoFactorExpires +twoFactorAttempts");
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    if (!user.twoFactorExpires || new Date() > user.twoFactorExpires) {
+        throw ApiError.badRequest("Verification code has expired. Please request a new one.");
+    }
+
+    if ((user.twoFactorAttempts || 0) >= 5) {
+        user.twoFactorCode = null;
+        user.twoFactorExpires = null;
+        user.twoFactorAttempts = 0;
+        await user.save();
+        throw ApiError.badRequest("Too many incorrect attempts. Please sign in again.");
+    }
+
+    if (user.twoFactorCode !== String(code).trim()) {
+        user.twoFactorAttempts = (user.twoFactorAttempts || 0) + 1;
+        await user.save();
+        const left = Math.max(0, 5 - user.twoFactorAttempts);
+        throw ApiError.badRequest(`Incorrect verification code. ${left} attempt${left === 1 ? "" : "s"} remaining.`);
+    }
+
+    // Verification succeeded
+    user.twoFactorCode = null;
+    user.twoFactorExpires = null;
+    user.twoFactorAttempts = 0;
+    user.lastLoginAt = new Date();
+
+    const sessionId = crypto.randomUUID();
+    const { browser, os, device } = parseUserAgent(req?.headers?.["user-agent"]);
+    const { ip, location } = parseClientIp(req || {});
+
+    user.activeSessions = upsertActiveSession(user.activeSessions, {
+        sessionId,
+        device,
+        browser,
+        os,
+        ip,
+        location,
+    });
+
+    await user.save();
+
+    const shouldRemember = rememberMe || Boolean(decoded.rememberMe);
+    const accessToken = createAccessToken(user, sessionId);
+    const refreshToken = createRefreshToken(user, sessionId, shouldRemember);
+
+    return { user, accessToken, refreshToken, shouldRemember };
+}
+
+export async function resendTwoFactor({ token }) {
+    if (!token) {
+        throw ApiError.unauthorized("2FA session expired. Please sign in again.");
+    }
+
+    let decoded;
+    try {
+        decoded = verify2FAPendingToken(token);
+    } catch {
+        throw ApiError.unauthorized("2FA session expired. Please sign in again.");
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    user.twoFactorCode = code;
+    user.twoFactorExpires = new Date(Date.now() + 10 * 60 * 1000);
+    user.twoFactorAttempts = 0;
+    await user.save();
+
+    await send2FACodeEmail({
+        to: user.email,
+        userName: user.fullName,
+        code,
+    });
+
+    return { message: "A new verification code has been sent" };
+}
+
+export async function toggleTwoFactor(userId, enabled) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    user.twoFactorEnabled = Boolean(enabled);
+    user.twoFactorCode = null;
+    user.twoFactorExpires = null;
+    user.twoFactorAttempts = 0;
+    await user.save();
+
+    return { twoFactorEnabled: user.twoFactorEnabled };
 }
 
 export async function verifyInviteDetails(token) {
@@ -181,21 +367,105 @@ export async function acceptInvite(token, password) {
 
     user.password = await hashPassword(password);
     user.status = "active";
+    user.emailVerified = true;
 
-    // Mark setup as complete so they skip the "create workspace" step
     if (!user.setupCompletedAt) {
         user.setupCompletedAt = new Date();
     }
 
-    // If the user doesn't have a workspaceId yet, find it via the Employee record
-    if (!user.workspaceId) {
+    try {
         const { Employee } = await import("../../model/employee/employee.model.js");
-        const employee = await Employee.findOne({ linkedUser: user._id });
+        const employee = await Employee.findOne({
+            $or: [
+                { linkedUser: user._id },
+                { loginEmail: user.email },
+                { workEmail: user.email },
+            ],
+        });
         if (employee) {
-            user.workspaceId = employee.workspace;
+            if (!user.workspaceId) {
+                user.workspaceId = employee.workspace;
+            }
+            if (!employee.linkedUser) {
+                employee.linkedUser = user._id;
+            }
+            if (employee.employmentStatus !== "Active") {
+                employee.employmentStatus = "Active";
+                employee.isActive = true;
+            }
+            await employee.save();
         }
+    } catch {}
+
+    await user.save();
+
+    return user;
+}
+
+export async function updateUserProfile(userId, patch) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    if (patch.fullName) user.fullName = String(patch.fullName).trim();
+    if (patch.displayName !== undefined) user.displayName = String(patch.displayName).trim();
+    if (patch.phone !== undefined) user.phone = String(patch.phone).trim();
+    if (patch.avatar !== undefined) user.avatar = patch.avatar;
+    if (patch.emergencyContact) {
+        user.emergencyContact = {
+            ...(user.emergencyContact || {}),
+            ...patch.emergencyContact,
+        };
     }
 
+    await user.save();
+    return user;
+}
+
+export async function changeUserPassword(userId, currentPassword, newPassword, sessionId = null) {
+    const user = await User.findById(userId).select("+password");
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    const match = await verifyPassword(currentPassword, user.password);
+    if (!match) {
+        throw ApiError.badRequest("Current password does not match");
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+        throw ApiError.badRequest("New password must be at least 8 characters");
+    }
+
+    user.password = await hashPassword(newPassword);
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    // Retain only current session if available, invalidating other devices
+    if (sessionId) {
+        user.activeSessions = (user.activeSessions || []).filter((s) => s.sessionId === sessionId);
+    }
+    await user.save();
+
+    return { user, message: "Password updated successfully" };
+}
+
+export async function logoutAllDevices(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    // Incrementing tokenVersion only for THIS user invalidates only this user's active tokens across all devices
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    user.activeSessions = [];
+    await user.save();
+
+    return { message: "Logged out from all devices" };
+}
+
+export async function updateNotificationPreferences(userId, prefs) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.unauthorized("User not found");
+
+    user.notificationPreferences = {
+        ...(user.notificationPreferences || {}),
+        ...prefs,
+    };
+    user.markModified("notificationPreferences");
     await user.save();
 
     return user;

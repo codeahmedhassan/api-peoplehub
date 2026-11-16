@@ -48,6 +48,16 @@ const attendanceRecordSchema = new Schema(
         checkIn: { type: Date, default: null },
         checkOut: { type: Date, default: null },
 
+        // Hourly calculation and short-hours salary deduction fields
+        hoursWorked: { type: Number, default: 0 },
+        requiredHours: { type: Number, default: 0 },
+        shortHours: { type: Number, default: 0 },
+        hourlyRate: { type: Number, default: 0 },
+        dailySalary: { type: Number, default: 0 },
+        deductionAmount: { type: Number, default: 0 },
+        earnedSalary: { type: Number, default: 0 },
+        salaryDeductionApplied: { type: Boolean, default: false },
+
         // If a manual mark overrode a device-sourced row, this preserves
         // the fact that the device originally marked them present.
         deviceMarkedPresent: { type: Boolean, default: false },
@@ -105,6 +115,15 @@ attendanceRecordSchema.methods.toSafeJSON = function (populatedEmployee = null) 
         source: this.source,
         checkIn: this.checkIn,
         checkOut: this.checkOut,
+
+        hoursWorked: this.hoursWorked ?? 0,
+        requiredHours: this.requiredHours ?? 0,
+        shortHours: this.shortHours ?? 0,
+        hourlyRate: this.hourlyRate ?? 0,
+        dailySalary: this.dailySalary ?? 0,
+        deductionAmount: this.deductionAmount ?? 0,
+        earnedSalary: this.earnedSalary ?? 0,
+        salaryDeductionApplied: Boolean(this.salaryDeductionApplied),
 
         deviceMarkedPresent: this.deviceMarkedPresent,
         deviceMarkedAt: this.deviceMarkedAt,

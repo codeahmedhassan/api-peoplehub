@@ -25,7 +25,26 @@ const activitySchema = new Schema(
         // The type of event
         type: {
             type: String,
-            enum: ["created", "updated", "document_added", "document_removed", "login_created"],
+            enum: [
+                "created",
+                "updated",
+                "document_added",
+                "document_removed",
+                "login_created",
+                "correction_requested",
+                "correction_approved",
+                "correction_rejected",
+                "promotion_requested",
+                "promotion_approved",
+                "doc_deletion_requested",
+                "deletion_requested",
+                "attendance_update_requested",
+                "attendance_update_approved",
+                "attendance_update_rejected",
+                "leave_cancellation_requested",
+                "leave_cancellation_approved",
+                "leave_cancellation_rejected",
+            ],
             required: true,
         },
         // Human readable description (e.g. "Department changed to Engineering")

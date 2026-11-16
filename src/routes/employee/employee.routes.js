@@ -4,13 +4,33 @@ import {
     listEmployeesController,
     deleteEmployeeController,
     getEmployeeController,
+    addDisciplinaryRecordController,
+    downloadEmployeeDocumentController,
+    deleteEmployeeDocumentController,
+    updateVettingCheckController,
     addDocumentsController,
     updateEmployeeController,
     getEmployeeActivityController,
     getNextEmployeeIdController,
+    uploadDraftDocumentController,
+    deleteDraftDocumentController,
+    listCorrectionRequestsController,
+    approveCorrectionRequestController,
+    rejectCorrectionRequestController,
+    requestPromotionController,
+    requestDocumentDeletionController,
+    requestEmployeeDeletionController,
+    requestAttendanceUpdateController,
+    bulkImportEmployeesController,
+    getWorkspaceManagersController,
+    replaceManagerController,
+    bulkAssignManagerController,
+    createEmployeeLoginAccountController,
+    resendEmployeeInvitationController,
+    updateEmployeePermissionsController,
 } from "../../controllers/employee/employee.controller.js";
-import { requireAuth } from "../../middleware/auth/auth.middleware.js";
-import { uploadEmployeeFiles } from "../../middleware/upload/multer.middleware.js";
+import { requireAuth, requirePermission } from "../../middleware/auth/auth.middleware.js";
+import { uploadEmployeeFiles, uploadBulkImportFile } from "../../middleware/upload/multer.middleware.js";
 import { employeeCreateLimiter } from "../../middleware/rateLimit/rateLimit.middleware.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import {
@@ -96,6 +116,7 @@ function parseMultipartBody(req, _res, next) {
 router.post(
     "/",
     requireAuth,
+    requirePermission("employees", "create"),
     employeeCreateLimiter,
     uploadEmployeeFiles,
     parseMultipartBody,
@@ -103,23 +124,59 @@ router.post(
     createEmployeeController
 );
 
-router.get("/", requireAuth, listEmployeesController);
+router.get("/", requireAuth, requirePermission("employees", "view"), listEmployeesController);
 
-// ⚠️ IMPORTANT: This must be defined BEFORE `/:id` so Express 
-// doesn't treat "next-id" as an employee ID.
+// ⚠️ IMPORTANT: These must be defined BEFORE `/:id` so Express 
+// doesn't treat them as an employee ID.
 router.get("/next-id", requireAuth, getNextEmployeeIdController);
+router.get("/managers", requireAuth, getWorkspaceManagersController);
+router.post("/managers/replace", requireAuth, replaceManagerController);
+router.post("/managers/assign", requireAuth, bulkAssignManagerController);
+router.post("/bulk-import", requireAuth, uploadBulkImportFile, bulkImportEmployeesController);
+router.get("/correction-requests", requireAuth, listCorrectionRequestsController);
+router.post("/correction-requests/:requestId/approve", requireAuth, approveCorrectionRequestController);
+router.post("/correction-requests/:requestId/reject", requireAuth, rejectCorrectionRequestController);
 
-router.get("/:id", requireAuth, getEmployeeController);
+router.post(
+    "/draft-documents",
+    requireAuth,
+    employeeCreateLimiter,
+    uploadEmployeeFiles,
+    parseMultipartBody,
+    uploadDraftDocumentController
+);
+
+router.delete(
+    "/draft-documents/:fileId",
+    requireAuth,
+    deleteDraftDocumentController
+);
+
+router.get("/:id", requireAuth, requirePermission("employees", "view"), getEmployeeController);
 
 // PATCH — partial update, JSON only
 router.patch(
     "/:id",
     requireAuth,
+    requirePermission("employees", "edit"),
     validate(updateEmployeeSchema),
     updateEmployeeController
 );
 
-router.delete("/:id", requireAuth, deleteEmployeeController);
+router.delete("/:id", requireAuth, requirePermission("employees", "delete"), deleteEmployeeController);
+
+router.post("/:id/disciplinary-records", requireAuth, addDisciplinaryRecordController);
+
+router.get("/:id/documents/:fileId/download", requireAuth, downloadEmployeeDocumentController);
+router.delete("/:id/documents/:fileId", requireAuth, deleteEmployeeDocumentController);
+router.patch("/:id/vetting", requireAuth, updateVettingCheckController);
+router.post("/:id/create-login", requireAuth, requirePermission("employees", "manageAccess"), createEmployeeLoginAccountController);
+router.post("/:id/resend-invite", requireAuth, requirePermission("employees", "manageAccess"), resendEmployeeInvitationController);
+router.patch("/:id/permissions", requireAuth, requirePermission("employees", "manageAccess"), updateEmployeePermissionsController);
+router.post("/:id/request-promotion", requireAuth, requestPromotionController);
+router.post("/:id/documents/:fileId/request-deletion", requireAuth, requestDocumentDeletionController);
+router.post("/:id/request-deletion", requireAuth, requestEmployeeDeletionController);
+router.post("/:id/request-attendance-update", requireAuth, requestAttendanceUpdateController);
 
 router.post(
     "/:id/documents",

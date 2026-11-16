@@ -7,6 +7,8 @@ import { getWorkspaceOrThrow } from "../../services/workspace/workspace.service.
 import { ApiError } from "../../utils/ApiError.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
+import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
+import { calculateAttendanceHoursAndDeduction } from "../../services/attendance/attendance.service.js";
 
 // --- Admin: Get all devices ---
 export const getDevices = asyncHandler(async (req, res) => {
@@ -134,6 +136,11 @@ export const handleDevicePunch = asyncHandler(async (req, res) => {
     const punchTime = new Date(timestamp);
     const dateString = punchTime.toISOString().slice(0, 10);
 
+    const [employee, workspace] = await Promise.all([
+        Employee.findById(link.employee),
+        Workspace.findById(device.workspace),
+    ]);
+
     let record = await AttendanceRecord.findOne({
         workspace: device.workspace,
         employee: link.employee,
@@ -150,12 +157,20 @@ export const handleDevicePunch = asyncHandler(async (req, res) => {
             checkIn: punchTime,
             deviceMarkedPresent: true,
             deviceMarkedAt: punchTime,
-            deviceId: device._id.toString()
+            deviceId: device._id.toString(),
+            requiredHours: Number(employee?.workingHours) || 8,
+            hoursWorked: 0,
+            shortHours: 0,
+            hourlyRate: 0,
+            dailySalary: 0,
+            deductionAmount: 0,
+            earnedSalary: 0,
+            salaryDeductionApplied: Boolean(workspace?.attendance?.deductShortHours),
         });
     } else {
         if (!record.checkIn) {
             record.checkIn = punchTime;
-        } else if (!record.checkOut && punchTime > record.checkIn) {
+        } else if (punchTime > record.checkIn) {
             record.checkOut = punchTime;
         }
         if (["absent", "unmarked", "weekend"].includes(record.status)) {
@@ -163,6 +178,23 @@ export const handleDevicePunch = asyncHandler(async (req, res) => {
             record.source = "device";
             record.deviceMarkedPresent = true;
             record.deviceMarkedAt = punchTime;
+        }
+        if (record.checkIn && record.checkOut) {
+            const calc = calculateAttendanceHoursAndDeduction({
+                checkIn: record.checkIn,
+                checkOut: record.checkOut,
+                employee,
+                workspace,
+            });
+            record.durationHours = calc.hoursWorked;
+            record.hoursWorked = calc.hoursWorked;
+            record.requiredHours = calc.requiredHours;
+            record.shortHours = calc.shortHours;
+            record.hourlyRate = calc.hourlyRate;
+            record.dailySalary = calc.dailySalary;
+            record.deductionAmount = calc.deductionAmount;
+            record.earnedSalary = calc.earnedSalary;
+            record.salaryDeductionApplied = calc.salaryDeductionApplied;
         }
         await record.save();
     }

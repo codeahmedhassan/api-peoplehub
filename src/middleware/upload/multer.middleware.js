@@ -33,3 +33,10 @@ export const uploadEmployeeFiles = multer({
         parts: 60,
     },
 }).array("files", MAX_FILES_PER_EMPLOYEE);
+
+export const uploadBulkImportFile = multer({
+    storage,
+    limits: {
+        fileSize: 25 * 1024 * 1024,
+    },
+}).single("file");

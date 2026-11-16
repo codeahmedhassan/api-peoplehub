@@ -18,15 +18,15 @@ app.set("trust proxy", 1);
 app.use(helmet());
 app.use(
     cors({
-        origin: [env.cors.marketingUrl, env.cors.adminUrl],
+        origin: [env.cors.marketingUrl, env.cors.adminUrl, env.cors.superAdminUrl],
         credentials: true,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
     })
 );
 
-app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(express.json({ limit: "30mb" }));
+app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 app.use(cookieParser());
 app.use(morgan(env.isProd ? "combined" : "dev"));
 

@@ -38,6 +38,7 @@ export const env = {
     cors: {
         marketingUrl: process.env.MARKETING_URL || "http://localhost:3001",
         adminUrl: process.env.ADMIN_URL || "http://localhost:3002",
+        superAdminUrl: process.env.SUPER_ADMIN_URL || "http://localhost:3003",
     },
 
     cookie: {
@@ -52,7 +53,7 @@ export const env = {
         secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
-        from: process.env.EMAIL_FROM || "PeopleHub <no-reply@peoplehub.com>",
+        from: process.env.EMAIL_FROM || "CorpiLance <no-reply@corpilance.com>",
     },
 
     // -------------------------------------------------------------------

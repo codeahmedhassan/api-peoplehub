@@ -1,18 +1,28 @@
 // src/services/attendance/attendance-export.service.js
 import XLSX from "xlsx";
 import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
+import { Employee } from "../../model/employee/employee.model.js";
 import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
-
+import { getCallerRoleContext, buildManagerDirectReportsMongoFilter } from "../employee/employee.service.js";
 
 /**
  * Build the list of rows for export. Does not paginate.
  */
-async function buildRows(workspace, query) {
+async function buildRows(workspace, query, userId = null) {
     const filter = { workspace: workspace._id };
     if (query.from && query.to) {
         filter.date = { $gte: query.from, $lte: query.to };
     }
     if (query.status) filter.status = query.status;
+
+    if (userId) {
+        const { caller, callerEmployee, isManager } = await getCallerRoleContext(userId, workspace);
+        if (isManager) {
+            const teamFilter = buildManagerDirectReportsMongoFilter(workspace._id, caller, callerEmployee, { includeSelf: true });
+            const teamEmployees = await Employee.find(teamFilter).select("_id").lean();
+            filter.employee = { $in: teamEmployees.map((e) => e._id) };
+        }
+    }
 
     let records = await AttendanceRecord.find(filter)
         .populate("employee", "firstName lastName employeeId department designation")
@@ -59,7 +69,7 @@ async function buildRows(workspace, query) {
  */
 export async function exportAttendanceCsv(userId, query) {
     const workspace = await getWorkspaceOrThrow(userId);
-    const rows = await buildRows(workspace, query);
+    const rows = await buildRows(workspace, query, userId);
 
     const headers = Object.keys(
         rows[0] ?? {
@@ -91,7 +101,7 @@ export async function exportAttendanceCsv(userId, query) {
  */
 export async function exportAttendanceXlsx(userId, query) {
     const workspace = await getWorkspaceOrThrow(userId);
-    const rows = await buildRows(workspace, query);
+    const rows = await buildRows(workspace, query, userId);
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();

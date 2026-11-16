@@ -51,3 +51,11 @@ export const exportQuerySchema = Joi.object({
 export const rollupTriggerSchema = Joi.object({
     workspaceId: Joi.string().trim().optional(),
 });
+
+export const clockActionSchema = Joi.object({
+    employeeId: Joi.string().trim().max(100).optional().allow(null, ""),
+});
+
+export const clockStatusQuerySchema = Joi.object({
+    employeeId: Joi.string().trim().max(100).optional().allow(null, ""),
+});

@@ -19,19 +19,16 @@ function baseCookieOptions(maxAge) {
 
 /**
  * Sets the access + refresh cookies.
- * When `rememberMe` is false, the refresh cookie becomes a session cookie
- * (no Max-Age) so it's discarded when the browser closes. Access token is
- * always short-lived (15 min) regardless.
+ * When `rememberMe` is false:
+ *   - Both cookies become RFC 6265 session cookies (no Max-Age or Expires)
+ *   - Closing / quitting Chrome immediately erases them from memory → user must sign in again
+ * When `rememberMe` is true:
+ *   - Both cookies receive Max-Age = 30 days and are persisted on disk across browser closures
  */
 export function setAuthCookies(res, { accessToken, refreshToken, rememberMe = false }) {
-    // When the user did NOT tick "Keep me signed in":
-    //   - both cookies become session cookies (no Max-Age)
-    //   - closing the browser discards them → logged out immediately
-    // When the user DID tick "Keep me signed in":
-    //   - the access cookie stays a session cookie (short-lived JWT anyway)
-    //   - the refresh cookie gets Max-Age = 30 days so it survives browser close
-    const accessMaxAge = undefined; // session cookie either way
-    const refreshMaxAge = rememberMe ? REFRESH_REMEMBER_ME_MAX_AGE_MS : undefined;
+    const isRemembered = Boolean(rememberMe);
+    const accessMaxAge = isRemembered ? REFRESH_REMEMBER_ME_MAX_AGE_MS : undefined;
+    const refreshMaxAge = isRemembered ? REFRESH_REMEMBER_ME_MAX_AGE_MS : undefined;
 
     res.cookie(
         COOKIE_NAMES.ACCESS_TOKEN,
@@ -45,7 +42,6 @@ export function setAuthCookies(res, { accessToken, refreshToken, rememberMe = fa
         baseCookieOptions(refreshMaxAge)
     );
 }
-
 
 export function clearAuthCookies(res) {
     const opts = baseCookieOptions(0);
@@ -63,4 +59,18 @@ export function setSignupPendingCookie(res, token) {
 
 export function clearSignupPendingCookie(res) {
     res.clearCookie(COOKIE_NAMES.SIGNUP_PENDING, baseCookieOptions(0));
+}
+
+const TWO_FACTOR_PENDING_MAX_AGE_MS = 10 * 60 * 1000;
+
+export function set2FAPendingCookie(res, token) {
+    res.cookie(
+        COOKIE_NAMES.TWO_FACTOR_PENDING,
+        token,
+        baseCookieOptions(TWO_FACTOR_PENDING_MAX_AGE_MS)
+    );
+}
+
+export function clear2FAPendingCookie(res) {
+    res.clearCookie(COOKIE_NAMES.TWO_FACTOR_PENDING, baseCookieOptions(0));
 }

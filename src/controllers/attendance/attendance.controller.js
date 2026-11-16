@@ -7,6 +7,9 @@ import {
     getTodayAttendance,
     markAttendance,
     triggerRollupForWorkspace,
+    clockInEmployee,
+    clockOutEmployee,
+    getClockStatus,
 } from "../../services/attendance/attendance.service.js";
 import {
     exportAttendanceCsv,
@@ -25,12 +28,16 @@ export const summaryController = asyncHandler(async (req, res) => {
 });
 
 export const todayController = asyncHandler(async (req, res) => {
-    const data = await getTodayAttendance(req.userId);
+    const clientDate = typeof req.query?.date === "string" ? req.query.date.trim() : null;
+    const data = await getTodayAttendance(req.userId, clientDate);
     return res.status(200).json(new ApiResponse(200, data, "Today attendance"));
 });
 
 export const markAttendanceController = asyncHandler(async (req, res) => {
     const { results, errors } = await markAttendance(req.userId, req.body);
+    if (results.length === 0 && errors.length > 0) {
+        throw ApiError.badRequest(errors[0].message || "Failed to mark attendance.");
+    }
     return res.status(200).json(
         new ApiResponse(
             200,
@@ -70,4 +77,30 @@ export const rollupController = asyncHandler(async (req, res) => {
     }
     const result = await triggerRollupForWorkspace(workspace);
     return res.status(200).json(new ApiResponse(200, result, "Rollup run"));
+});
+
+export const clockInController = asyncHandler(async (req, res) => {
+    return res.status(400).json(
+        new ApiResponse(
+            400,
+            null,
+            "Web-based clock-in is disabled. Employees can only mark attendance from biometric devices, or HR can manually mark attendance."
+        )
+    );
+});
+
+export const clockOutController = asyncHandler(async (req, res) => {
+    return res.status(400).json(
+        new ApiResponse(
+            400,
+            null,
+            "Web-based clock-out is disabled. Employees can only mark attendance from biometric devices, or HR can manually mark attendance."
+        )
+    );
+});
+
+export const clockStatusController = asyncHandler(async (req, res) => {
+    const targetEmployeeId = req.query?.employeeId || null;
+    const result = await getClockStatus(req.userId, targetEmployeeId);
+    return res.status(200).json(new ApiResponse(200, result, "Clock status loaded"));
 });

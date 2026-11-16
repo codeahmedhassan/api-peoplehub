@@ -37,9 +37,10 @@ export function getDateInTimezone(date, timezoneString) {
  */
 export function startOfDayInTimezone(dateString, timezoneString) {
     const offsetMin = parseTimezoneOffsetMinutes(timezoneString) ?? 0;
-    // dateString is "YYYY-MM-DD"
+    if (!dateString || typeof dateString !== "string" || !dateString.includes("-")) {
+        return new Date();
+    }
     const [y, m, d] = dateString.split("-").map(Number);
-    // Date.UTC builds midnight UTC for that calendar date; subtract offset to get UTC of that local midnight.
     const utcMidnight = Date.UTC(y, m - 1, d, 0, 0, 0, 0);
     return new Date(utcMidnight - offsetMin * 60 * 1000);
 }
@@ -51,6 +52,9 @@ export function startOfDayInTimezone(dateString, timezoneString) {
  * The rollup always processes *completed* days, so `today` itself is excluded.
  */
 export function getRollupDates(todayLocal, lookbackDays) {
+    if (!todayLocal || typeof todayLocal !== "string" || !todayLocal.includes("-")) {
+        todayLocal = new Date().toISOString().slice(0, 10);
+    }
     const [y, m, d] = todayLocal.split("-").map(Number);
     const out = [];
     for (let i = lookbackDays; i >= 1; i--) {
@@ -64,6 +68,9 @@ export function getRollupDates(todayLocal, lookbackDays) {
  * Day of week (0 = Sunday, 6 = Saturday) for a "YYYY-MM-DD" string.
  */
 export function dayOfWeek(dateString) {
+    if (!dateString || typeof dateString !== "string" || !dateString.includes("-")) {
+        return new Date().getUTCDay();
+    }
     const [y, m, d] = dateString.split("-").map(Number);
     return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }

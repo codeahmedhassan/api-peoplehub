@@ -14,12 +14,14 @@ export const ATTENDANCE_STATUSES = [
     "on-leave",
     "holiday",
     "weekend",
+    "remote",
 ];
 
 export const ATTENDANCE_SOURCES = [
     "manual",     // an admin clicked Present/Absent/etc
     "device",     // physical attendance machine punch
-    "auto",       // rollup job wrote absent/weekend/holiday
+    "web",        // web clock in/out
+    "auto",       // rollup job wrote absent/weekend/holiday/remote
     "import",     // bulk import from CSV/etc
 ];
 
@@ -30,6 +32,7 @@ export const TERMINAL_STATUSES = new Set([
     "late",
     "half-day",
     "on-leave",
+    "remote",
 ]);
 
 // Statuses that CAN be replaced by manual marking.
@@ -43,6 +46,7 @@ export const MANUAL_OVERRIDABLE_STATUSES = new Set([
     "late",
     "half-day",
     "on-leave",
+    "remote",
 ]);
 
 // Default weekend days (0=Sunday, 6=Saturday) for new workspaces.

@@ -46,6 +46,17 @@ export async function deleteEncryptedBlob(key) {
     );
 }
 
+export async function getEncryptedBlob(key) {
+    const res = await getClient().send(
+        new GetObjectCommand({
+            Bucket: env.s3.bucket,
+            Key: key,
+        })
+    );
+    const byteArray = await res.Body.transformToByteArray();
+    return Buffer.from(byteArray);
+}
+
 /**
  * Generate a short-lived signed URL for direct download.
  * Downloads go through S3 → the browser receives ciphertext → the browser

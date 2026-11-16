@@ -20,13 +20,15 @@ export const SIGNUP_ROLES = [
 export const USER_STATUS = {
     PENDING: "pending",
     ACTIVE: "active",
+    INACTIVE: "inactive",
     SUSPENDED: "suspended",
 };
 
 export const COOKIE_NAMES = {
     ACCESS_TOKEN: "ph_at",
     REFRESH_TOKEN: "ph_rt",
-    SIGNUP_PENDING: "ph_signup", // short-lived, proves "I started a signup"
+    SIGNUP_PENDING: "ph_signup",
+    TWO_FACTOR_PENDING: "ph_2fa_pending", // short-lived, proves "I started a signup"
 };
 
 // -------------------------------------------------------------------

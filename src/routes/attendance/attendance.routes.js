@@ -6,6 +6,9 @@ import {
     markAttendanceController,
     exportController,
     rollupController,
+    clockInController,
+    clockOutController,
+    clockStatusController,
 } from "../../controllers/attendance/attendance.controller.js";
 import { requireAuth } from "../../middleware/auth/auth.middleware.js";
 import { noCache } from "../../middleware/cache/no-cache.middleware.js";
@@ -17,6 +20,8 @@ import {
     summaryQuerySchema,
     markAttendanceSchema,
     exportQuerySchema,
+    clockActionSchema,
+    clockStatusQuerySchema,
 } from "../../validators/attendance/attendance.validator.js";
 
 const router = Router();
@@ -34,5 +39,10 @@ router.get("/export", requireAuth, validateQuery(exportQuerySchema), exportContr
 
 router.post("/mark", requireAuth, validate(markAttendanceSchema), markAttendanceController);
 router.post("/rollup", requireAuth, rollupController);
+
+// Clock in / out / status
+router.get("/clock-status", requireAuth, validateQuery(clockStatusQuerySchema), clockStatusController);
+router.post("/clock-in", requireAuth, validate(clockActionSchema), clockInController);
+router.post("/clock-out", requireAuth, validate(clockActionSchema), clockOutController);
 
 export default router;
