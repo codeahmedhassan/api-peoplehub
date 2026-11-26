@@ -62,14 +62,17 @@ export function verifySuperAdminRefreshToken(token) {
 
 export function setSuperAdminCookies(res, { accessToken, refreshToken }) {
     const isProd = env.isProd;
-    const cookieDomain = env.cookie.domain === "localhost" ? undefined : env.cookie.domain;
+    const cookieDomain =
+        isProd && env.cookie.domain && env.cookie.domain !== "localhost"
+            ? env.cookie.domain
+            : undefined;
 
     // Session-based cookies: by omitting maxAge and expires, the browser treats them as session cookies
     // which are automatically destroyed when the browser is closed.
     const baseOptions = {
         httpOnly: true,
-        secure: isProd,
-        sameSite: isProd ? "none" : "lax",
+        secure: isProd ? env.cookie.secure : false,
+        sameSite: env.cookie.sameSite,
         domain: cookieDomain,
         path: "/",
     };
@@ -84,11 +87,15 @@ export function setSuperAdminCookies(res, { accessToken, refreshToken }) {
 }
 
 export function clearSuperAdminCookies(res) {
-    const cookieDomain = env.cookie.domain === "localhost" ? undefined : env.cookie.domain;
+    const isProd = env.isProd;
+    const cookieDomain =
+        isProd && env.cookie.domain && env.cookie.domain !== "localhost"
+            ? env.cookie.domain
+            : undefined;
     const baseOptions = {
         httpOnly: true,
-        secure: env.isProd,
-        sameSite: env.isProd ? "none" : "lax",
+        secure: isProd ? env.cookie.secure : false,
+        sameSite: env.cookie.sameSite,
         domain: cookieDomain,
         path: "/",
     };

@@ -31,7 +31,8 @@
  */
 
 import mongoose from "mongoose";
-import { S3Client, CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { createS3Client } from "../services/storage/s3.service.js";
 import { Employee } from "../model/employee/employee.model.js";
 import { ChatMessage } from "../model/chat/message.model.js";
 import { env } from "../config/env.js";
@@ -55,13 +56,7 @@ async function run() {
     await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/hr_database");
     console.log("[Migration] Connected to MongoDB");
 
-    const s3 = new S3Client({
-        region: env.s3.region,
-        credentials: {
-            accessKeyId: env.s3.accessKeyId,
-            secretAccessKey: env.s3.secretAccessKey,
-        },
-    });
+    const s3 = createS3Client();
 
     let migratedDocsCount = 0;
     let migratedVoicesCount = 0;

@@ -59,8 +59,11 @@ const defaultOrigins = [
     "https://admin.corpilance.com",
     "https://superadmin.corpilance.com",
     "https://corpilance.tech",
+    "https://www.corpilance.tech",
     "https://admin.corpilance.tech",
+    "https://admin.corpilace.tech",
     "https://superadmin.corpilance.tech",
+    "https://console.corpilance.tech",
 ];
 
 const allowedOrigins = new Set(
@@ -75,28 +78,31 @@ const allowedOrigins = new Set(
         .map((url) => String(url).replace(/\/$/, ""))
 );
 
-app.use(
-    cors({
-        origin: (origin, callback) => {
-            if (!origin) return callback(null, true);
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
 
-            const normalized = origin.replace(/\/$/, "");
-            if (allowedOrigins.has(normalized)) {
-                return callback(null, true);
-            }
+        const normalized = origin.replace(/\/$/, "");
+        if (allowedOrigins.has(normalized)) {
+            return callback(null, true);
+        }
 
-            // Allow localhost ports strictly in non-production
-            if (!env.isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
-                return callback(null, true);
-            }
+        // Allow localhost ports strictly in non-production
+        if (!env.isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
+            return callback(null, true);
+        }
 
-            return callback(null, false);
-        },
-        credentials: true,
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "x-device-key"],
-    })
-);
+        return callback(null, false);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-device-key", "X-Requested-With", "Cache-Control"],
+    exposedHeaders: ["Content-Disposition"],
+    optionsSuccessStatus: 204,
+};
+
+app.options("*", cors(corsOptions));
+app.use(cors(corsOptions));
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));

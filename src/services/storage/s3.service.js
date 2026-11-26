@@ -6,15 +6,35 @@ import { env } from "../../config/env.js";
 export * from "./s3-paths.service.js";
 
 let client;
+
+/**
+ * Creates an S3Client that uses explicit credentials when provided (e.g. local dev)
+ * and automatically falls back to AWS SDK's default credential chain (EC2 IAM Role
+ * via IMDSv2, ECS Task Role, etc.) when AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are omitted.
+ */
+export function createS3Client() {
+    const accessKeyId = env.s3.accessKeyId?.trim();
+    const secretAccessKey = env.s3.secretAccessKey?.trim();
+    const sessionToken = env.s3.sessionToken?.trim();
+
+    const config = {
+        region: env.s3.region,
+    };
+
+    if (accessKeyId && secretAccessKey) {
+        config.credentials = {
+            accessKeyId,
+            secretAccessKey,
+            ...(sessionToken ? { sessionToken } : {}),
+        };
+    }
+
+    return new S3Client(config);
+}
+
 function getClient() {
     if (!client) {
-        client = new S3Client({
-            region: env.s3.region,
-            credentials: {
-                accessKeyId: env.s3.accessKeyId,
-                secretAccessKey: env.s3.secretAccessKey,
-            },
-        });
+        client = createS3Client();
     }
     return client;
 }
