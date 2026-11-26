@@ -4,7 +4,7 @@ import { verifyAccessToken } from "../../utils/tokens.js";
 import { verifySignupPendingToken } from "../../utils/signupToken.js";
 import { COOKIE_NAMES } from "../../constants/index.js";
 import { User } from "../../model/auth/auth.model.js";
-import { refreshSession } from "../../services/auth/auth.service.js";
+import { refreshSession, assertUserWorkspaceNotRevoked } from "../../services/auth/auth.service.js";
 import { setAuthCookies, clearAuthCookies } from "../../utils/cookies.js";
 
 export async function requireAuth(req, res, next) {
@@ -14,11 +14,16 @@ export async function requireAuth(req, res, next) {
     if (token) {
         try {
             const decoded = verifyAccessToken(token);
+            await assertUserWorkspaceNotRevoked(decoded.sub);
             req.userId = decoded.sub;
             req.tokenVersion = decoded.ver ?? 0;
             req.sessionId = decoded.sid ?? null;
             return next();
-        } catch {
+        } catch (err) {
+            if (err?.code === "WORKSPACE_ACCESS_REVOKED") {
+                clearAuthCookies(res);
+                return next(err);
+            }
             // Access token expired; fall through to silent refresh via refresh token
         }
     }
@@ -31,8 +36,11 @@ export async function requireAuth(req, res, next) {
             req.tokenVersion = user.tokenVersion ?? 0;
             req.sessionId = null;
             return next();
-        } catch {
+        } catch (err) {
             clearAuthCookies(res);
+            if (err?.code === "WORKSPACE_ACCESS_REVOKED") {
+                return next(err);
+            }
             return next(ApiError.unauthorized("Session expired"));
         }
     }

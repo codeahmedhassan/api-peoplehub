@@ -15,6 +15,7 @@ import { noCache } from "../../middleware/cache/no-cache.middleware.js";
 import { validateQuery } from "../../middleware/validate/validate.middleware.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import { handleDevicePunch } from "../../controllers/attendance/device.controller.js";
+import { devicePunchLimiter } from "../../middleware/rateLimit/rateLimit.middleware.js";
 import {
     listAttendanceQuerySchema,
     summaryQuerySchema,
@@ -30,7 +31,7 @@ const router = Router();
 // rollup jobs). None of them should ever be cached.
 router.use(noCache);
 
-router.post("/device/punch", handleDevicePunch);
+router.post("/device/punch", devicePunchLimiter, handleDevicePunch);
 
 router.get("/", requireAuth, validateQuery(listAttendanceQuerySchema), listAttendanceController);
 router.get("/summary", requireAuth, validateQuery(summaryQuerySchema), summaryController);

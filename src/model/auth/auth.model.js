@@ -162,6 +162,14 @@ const userSchema = new Schema(
             type: Schema.Types.Mixed,
             default: () => ({}),
         },
+        legalAcceptance: {
+            termsAccepted: { type: Boolean, default: false },
+            termsVersion: { type: String, default: "1.0" },
+            privacyAccepted: { type: Boolean, default: false },
+            privacyVersion: { type: String, default: "1.0" },
+            acceptedAt: { type: Date, default: null },
+            ipAddress: { type: String, default: "" },
+        },
     },
     { timestamps: true }
 );

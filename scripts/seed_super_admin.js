@@ -1,3 +1,13 @@
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config();
+if (!process.env.MONGODB_URI) {
+    dotenv.config({ path: path.resolve(__dirname, "../.env") });
+}
+
 import { connectDB } from "../src/config/db.js";
 import { SuperAdmin } from "../src/model/superAdmin/superAdmin.model.js";
 

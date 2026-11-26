@@ -4,6 +4,7 @@ import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 import { getCallerRoleContext, buildManagerDirectReportsMongoFilter } from "../employee/employee.service.js";
+import { sanitizeCsvCell } from "../../utils/security.js";
 
 /**
  * Build the list of rows for export. Does not paginate.
@@ -25,10 +26,23 @@ async function buildRows(workspace, query, userId = null) {
     }
 
     let records = await AttendanceRecord.find(filter)
-        .populate("employee", "firstName lastName employeeId department designation")
+        .populate("employee", "firstName lastName employeeId department designation joiningDate createdAt")
         .populate("markedBy", "fullName")
         .sort({ date: -1, createdAt: -1 })
         .lean();
+
+    records = records.filter((r) => {
+        const emp = r.employee;
+        if (!emp || typeof emp !== "object") return true;
+        const jd = emp.joiningDate || emp.createdAt;
+        if (jd) {
+            const hireDateStr = jd instanceof Date ? jd.toISOString().slice(0, 10) : String(jd).slice(0, 10);
+            if (r.date < hireDateStr && r.source === "auto") {
+                return false;
+            }
+        }
+        return true;
+    });
 
     if (query.department) {
         records = records.filter(
@@ -80,7 +94,7 @@ export async function exportAttendanceCsv(userId, query) {
     );
 
     const escape = (v) => {
-        const s = String(v ?? "");
+        const s = String(sanitizeCsvCell(v ?? ""));
         if (s.includes(",") || s.includes('"') || s.includes("\n")) {
             return `"${s.replace(/"/g, '""')}"`;
         }

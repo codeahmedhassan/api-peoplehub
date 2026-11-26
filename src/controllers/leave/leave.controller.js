@@ -18,6 +18,7 @@ import {
     addCustomLeaveType,
     deleteCustomLeaveType,
 } from "../../services/leave/leave.service.js";
+import { eventEngine } from "../../services/observability/eventEngine.service.js";
 
 export const getLeaveSummaryController = asyncHandler(async (req, res) => {
     const data = await getLeaveSummary(req.userId);
@@ -31,6 +32,22 @@ export const listLeaveRequestsController = asyncHandler(async (req, res) => {
 
 export const createLeaveRequestController = asyncHandler(async (req, res) => {
     const data = await createLeaveRequest(req.userId, req.body);
+
+    if (data) {
+        eventEngine.trackEvent({
+            eventName: "leave_requested",
+            module: "leave",
+            feature: "request_leave",
+            organizationId: data.workspace || req.user?.activeWorkspace,
+            userId: req.userId,
+            requestId: req.id,
+            properties: {
+                leaveType: data.type,
+                totalDays: data.totalDays,
+            },
+        });
+    }
+
     return res
         .status(201)
         .json(new ApiResponse(201, { request: data }, "Leave request submitted successfully"));
@@ -56,6 +73,19 @@ export const reviewLeaveRequestController = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { status, reviewerComments } = req.body;
     const data = await reviewLeaveRequest(req.userId, id, { status, reviewerComments });
+
+    if (data) {
+        eventEngine.trackEvent({
+            eventName: status === "approved" ? "leave_approved" : "leave_rejected",
+            module: "leave",
+            feature: "review_leave",
+            organizationId: data.workspace || req.user?.activeWorkspace,
+            userId: req.userId,
+            requestId: req.id,
+            properties: { status },
+        });
+    }
+
     return res
         .status(200)
         .json(new ApiResponse(200, { request: data }, `Leave request ${status} successfully`));

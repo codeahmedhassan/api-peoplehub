@@ -5,6 +5,7 @@ import { ApiError } from "../../utils/ApiError.js";
 import { EmployeeActivity } from "../../model/employee/activity.model.js";
 import { nextEmployeeId } from "../../services/employee/employee.service.js";
 import { getWorkspaceOrThrow } from "../../services/workspace/workspace.service.js";
+import { eventEngine } from "../../services/observability/eventEngine.service.js";
 import {
     createEmployee,
     listEmployees,
@@ -25,6 +26,7 @@ import {
     requestEmployeeDeletion,
     requestAttendanceUpdate,
     bulkImportEmployees,
+    exportEmployees,
     getWorkspaceManagers,
     replaceManager,
     bulkAssignManager,
@@ -71,6 +73,21 @@ export const createEmployeeController = asyncHandler(async (req, res) => {
 
     const employee = await createEmployee(req.userId, employeeData, files);
 
+    if (employee) {
+        eventEngine.trackEvent({
+            eventName: "employee_created",
+            module: "employee",
+            feature: "create_profile",
+            organizationId: employee.workspace,
+            userId: req.userId,
+            requestId: req.id,
+            properties: {
+                department: employee.jobDetails?.department,
+                designation: employee.jobDetails?.designation,
+            },
+        });
+    }
+
     return res
         .status(201)
         .json(
@@ -92,6 +109,16 @@ export const listEmployeesController = asyncHandler(async (req, res) => {
 export const deleteEmployeeController = asyncHandler(async (req, res) => {
     const { id } = req.params;
     await deleteEmployee(req.userId, id);
+
+    eventEngine.trackEvent({
+        eventName: "employee_deactivated",
+        module: "employee",
+        feature: "delete_employee",
+        organizationId: req.user?.activeWorkspace || req.workspace?._id,
+        userId: req.userId,
+        requestId: req.id,
+    });
+
     return res
         .status(200)
         .json(new ApiResponse(200, null, "Employee deleted"));
@@ -173,6 +200,8 @@ export const downloadEmployeeDocumentController = asyncHandler(async (req, res) 
         "Content-Disposition",
         `${disposition}; filename="${encodeURIComponent(fileName)}"`
     );
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Content-Length", buffer.length);
     return res.end(buffer);
 });
@@ -325,7 +354,7 @@ export const getNextEmployeeIdController = asyncHandler(async (req, res) => {
 export const uploadDraftDocumentController = asyncHandler(async (req, res) => {
     const { getWorkspaceOrThrow } = await import("../../services/workspace/workspace.service.js");
     const { encryptFile } = await import("../../services/storage/document-crypto.service.js");
-    const { uploadEncryptedBlob, deleteEncryptedBlob } = await import("../../services/storage/s3.service.js");
+    const { uploadEncryptedBlob, deleteEncryptedBlob, getEmployeeAttachmentPath } = await import("../../services/storage/s3.service.js");
 
     const workspace = await getWorkspaceOrThrow(req.userId);
     const files = req.files || [];
@@ -350,7 +379,8 @@ export const uploadDraftDocumentController = asyncHandler(async (req, res) => {
                     fileId,
                 });
 
-            const s3Key = `employees/${workspace._id}/drafts/${fileId}.enc`;
+            // Canonical tree: employees/{employeeId}/attachments/{filename}
+            const s3Key = getEmployeeAttachmentPath(`draft-${workspace._id}`, `${fileId}.enc`);
             await uploadEncryptedBlob(s3Key, ciphertext);
 
             uploadedDocs.push({
@@ -381,7 +411,7 @@ export const uploadDraftDocumentController = asyncHandler(async (req, res) => {
 
 export const deleteDraftDocumentController = asyncHandler(async (req, res) => {
     const { getWorkspaceOrThrow } = await import("../../services/workspace/workspace.service.js");
-    const { deleteEncryptedBlob } = await import("../../services/storage/s3.service.js");
+    const { deleteEncryptedBlob, getEmployeeAttachmentPath } = await import("../../services/storage/s3.service.js");
 
     const workspace = await getWorkspaceOrThrow(req.userId);
     const { fileId } = req.params;
@@ -390,11 +420,16 @@ export const deleteDraftDocumentController = asyncHandler(async (req, res) => {
         throw ApiError.badRequest("fileId is required");
     }
 
-    const s3Key = `employees/${workspace._id}/drafts/${fileId}.enc`;
+    const s3Key = getEmployeeAttachmentPath(`draft-${workspace._id}`, `${fileId}.enc`);
     try {
         await deleteEncryptedBlob(s3Key);
     } catch (err) {
-        console.warn(`[deleteDraftDocument] S3 deletion warning: ${err.message}`);
+        // Also attempt legacy path if present
+        try {
+            await deleteEncryptedBlob(`employees/${workspace._id}/drafts/${fileId}.enc`);
+        } catch {
+            console.warn(`[deleteDraftDocument] S3 deletion warning: ${err.message}`);
+        }
     }
 
     return res.status(200).json(new ApiResponse(200, { fileId }, "Draft document deleted from S3"));
@@ -420,6 +455,20 @@ export const bulkImportEmployeesController = asyncHandler(async (req, res) => {
     });
 
     return res.status(200).json(new ApiResponse(200, result, "Employees bulk import processed successfully"));
+});
+
+export const exportEmployeesController = asyncHandler(async (req, res) => {
+    const { format, department, branch, status, q } = req.query;
+    const { buffer, contentType, filename } = await exportEmployees(req.userId, {
+        format,
+        department,
+        branch,
+        status,
+        q,
+    });
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(buffer);
 });
 
 export const getWorkspaceManagersController = asyncHandler(async (req, res) => {

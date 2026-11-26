@@ -26,6 +26,7 @@ const payslipEntrySchema = new Schema(
         employeeId: { type: String, required: true },
         employeeName: { type: String, required: true },
         employeeEmail: { type: String, default: "" },
+        employeeAvatar: { type: String, default: "" },
         department: { type: String, default: "" },
         designation: { type: String, default: "" },
         branch: { type: String, default: "" },
@@ -38,6 +39,7 @@ const payslipEntrySchema = new Schema(
         unpaidLeaveDays: { type: Number, default: 0 },
         overtimeHours: { type: Number, default: 0 },
         isManualAdjustment: { type: Boolean, default: false },
+        currency: { type: String, default: "PKR" },
 
         // Calculated components
         basicSalary: { type: Number, required: true },
@@ -74,6 +76,22 @@ const payslipEntrySchema = new Schema(
         },
     },
     { _id: true }
+);
+
+const currencySummarySchema = new Schema(
+    {
+        currency: { type: String, required: true },
+        employeeCount: { type: Number, default: 0 },
+        totalBasic: { type: Number, default: 0 },
+        totalGross: { type: Number, default: 0 },
+        totalEarnings: { type: Number, default: 0 },
+        totalDeductions: { type: Number, default: 0 },
+        totalEmployerContributions: { type: Number, default: 0 },
+        totalReimbursements: { type: Number, default: 0 },
+        totalNetPay: { type: Number, default: 0 },
+        totalCostToCompany: { type: Number, default: 0 },
+    },
+    { _id: false }
 );
 
 const payrollBatchSchema = new Schema(
@@ -131,6 +149,7 @@ const payrollBatchSchema = new Schema(
         totalEmployerContributions: { type: Number, default: 0 },
         totalReimbursements: { type: Number, default: 0 },
         totalCostToCompany: { type: Number, default: 0 },
+        currencyBreakdown: [currencySummarySchema],
 
         // Employee snapshot list
         entries: [payslipEntrySchema],

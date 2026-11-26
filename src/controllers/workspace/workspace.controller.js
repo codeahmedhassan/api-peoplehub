@@ -1,4 +1,5 @@
 import { User } from "../../model/auth/auth.model.js";
+import { getWorkspacePlanUsage } from "../../services/workspace/plan.service.js";
 // src/controllers/workspace/workspace.controller.js
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
@@ -240,5 +241,15 @@ export const replaceCeoController = asyncHandler(async (req, res) => {
     const result = await transferCeoAndExit(req.userId, targetEmployeeId);
     return res.status(200).json(
         new ApiResponse(200, result, result.message)
+    );
+});
+
+export const getWorkspacePlanController = asyncHandler(async (req, res) => {
+    const workspace = await getWorkspaceForUser(req.userId);
+    if (!workspace) throw ApiError.notFound("Workspace not found");
+
+    const usage = await getWorkspacePlanUsage(workspace._id);
+    return res.status(200).json(
+        new ApiResponse(200, usage, "Workspace plan details loaded")
     );
 });

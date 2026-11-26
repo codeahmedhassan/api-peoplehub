@@ -63,6 +63,10 @@ const employeeLoanSchema = new Schema(
             type: String,
             required: true,
         },
+        currency: {
+            type: String,
+            default: "PKR",
+        },
         status: {
             type: String,
             enum: ["pending", "approved", "active", "completed", "rejected"],

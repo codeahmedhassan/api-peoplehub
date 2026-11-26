@@ -2,6 +2,7 @@ import { Feedback } from "../../model/feedback/feedback.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { escapeRegex } from "../../utils/security.js";
 
 export async function createFeedback(userId, data, req = null) {
     if (!data.title || !data.title.trim()) {
@@ -77,7 +78,7 @@ export async function listFeedbacksForSuperAdmin({ type, status, search, page = 
     }
 
     if (search && search.trim()) {
-        const regex = new RegExp(search.trim(), "i");
+        const regex = new RegExp(escapeRegex(search.trim()), "i");
         filter.$or = [
             { title: regex },
             { description: regex },

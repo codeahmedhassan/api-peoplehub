@@ -20,6 +20,15 @@ import {
 // Helpers
 // -------------------------------------------------------------------
 
+function getEmployeeHireDateStr(emp) {
+    if (!emp) return null;
+    const jd = emp.joiningDate || emp.createdAt;
+    if (!jd) return null;
+    if (jd instanceof Date) return jd.toISOString().slice(0, 10);
+    if (typeof jd === "string") return jd.slice(0, 10);
+    return null;
+}
+
 /**
  * Build the shared filter used by list / summary / export.
  */
@@ -199,7 +208,7 @@ export async function listAttendance(userId, query) {
 
     const [records, total] = await Promise.all([
         AttendanceRecord.find(filter)
-            .populate("employee", "firstName lastName employeeId avatar department designation workLocation")
+            .populate("employee", "firstName lastName employeeId avatar department designation workLocation joiningDate createdAt")
             .populate("markedBy", "fullName")
             .sort({ date: -1, createdAt: -1 })
             .skip(skip)
@@ -208,8 +217,18 @@ export async function listAttendance(userId, query) {
         AttendanceRecord.countDocuments(filter),
     ]);
 
+    const validRecords = records.filter((r) => {
+        const emp = r.employee;
+        if (!emp || typeof emp !== "object") return true;
+        const hireDateStr = getEmployeeHireDateStr(emp);
+        if (hireDateStr && r.date < hireDateStr) {
+            return false;
+        }
+        return true;
+    });
+
     return {
-        records: records.map((r) => {
+        records: validRecords.map((r) => {
             const rowHours = calculateRecordHours(r, Number(r.employee?.workingHours) || 8);
             const safe = new AttendanceRecord(r).toSafeJSON(r.employee);
             return {
@@ -244,11 +263,22 @@ export async function getAttendanceSummary(userId, query) {
     }
 
     const records = await AttendanceRecord.find(filter)
-        .select("date status")
+        .populate("employee", "joiningDate createdAt")
+        .select("date status source employee")
         .lean();
 
+    const validRecords = records.filter((r) => {
+        const emp = r.employee;
+        if (!emp || typeof emp !== "object") return true;
+        const hireDateStr = getEmployeeHireDateStr(emp);
+        if (hireDateStr && r.date < hireDateStr) {
+            return false;
+        }
+        return true;
+    });
+
     const counts = {
-        total: records.length,
+        total: validRecords.length,
         present: 0,
         absent: 0,
         late: 0,
@@ -262,7 +292,7 @@ export async function getAttendanceSummary(userId, query) {
 
     const perDate = new Map();
 
-    for (const r of records) {
+    for (const r of validRecords) {
         switch (r.status) {
             case "present": counts.present++; break;
             case "absent": counts.absent++; break;
@@ -431,7 +461,7 @@ export async function getTodayAttendance(userId, clientDate = null) {
 
     const [employees, records] = await Promise.all([
         Employee.find(empFilter)
-            .select("firstName lastName employeeId avatar department designation workLocation workArrangement workingHours isActive status")
+            .select("firstName lastName employeeId avatar department designation workLocation workArrangement workingHours isActive status joiningDate createdAt")
             .sort({ firstName: 1, lastName: 1 })
             .lean(),
         AttendanceRecord.find({ workspace: workspace._id, date: today })
@@ -445,6 +475,7 @@ export async function getTodayAttendance(userId, clientDate = null) {
 
     const rows = employees.map((emp) => {
         const rec = byEmployee.get(emp._id.toString());
+        const hireDateStr = getEmployeeHireDateStr(emp);
         const base = {
             employeeId: emp.employeeId,
             employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
@@ -454,6 +485,7 @@ export async function getTodayAttendance(userId, clientDate = null) {
             branch: emp.workLocation || "",
             employeeObjectId: emp._id.toString(),
             date: today,
+            joiningDate: hireDateStr,
         };
         if (!rec) {
             const isRemote = /remote/i.test(emp.workArrangement || "");
@@ -688,7 +720,7 @@ export async function rollupWorkspace(workspace, dates) {
 
     // All active employees in the workspace
     const employees = await Employee.find({ workspace: workspaceId })
-        .select("_id workArrangement workingHours isActive status")
+        .select("_id workArrangement workingHours isActive status joiningDate createdAt")
         .lean();
 
     if (employees.length === 0) return { created: 0 };
@@ -712,6 +744,13 @@ export async function rollupWorkspace(workspace, dates) {
         const ops = [];
         for (const emp of employees) {
             if (have.has(emp._id.toString())) continue;
+
+            const hireDateStr = getEmployeeHireDateStr(emp);
+            if (hireDateStr && date < hireDateStr) {
+                // Do not generate auto-records for dates before employee was hired
+                continue;
+            }
+
             const isRemote = /remote/i.test(emp.workArrangement || "");
             const status = isHoliday ? "holiday" : weekend ? "weekend" : (isRemote ? "remote" : "absent");
             const reqHours = Number(emp.workingHours) || 8;

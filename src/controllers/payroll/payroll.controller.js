@@ -3,6 +3,7 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { getWorkspaceOrThrow } from "../../services/workspace/workspace.service.js";
+import { eventEngine } from "../../services/observability/eventEngine.service.js";
 import {
     getComponents,
     createComponent,
@@ -25,6 +26,7 @@ import {
     createSalaryStructure,
     updateSalaryStructure,
     deleteSalaryStructure,
+    buildBatchCurrencyBreakdown,
 } from "../../services/payroll/payroll.service.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { PayrollBatch } from "../../model/payroll/payrollBatch.model.js";
@@ -103,6 +105,20 @@ export const generateBatchController = asyncHandler(async (req, res) => {
     const { month, adjustments, payFrequency } = req.body;
     if (!month) throw ApiError.badRequest("Month (YYYY-MM) is required");
     const batch = await generatePayrollBatch(workspace._id, month, req.userId, adjustments, payFrequency);
+
+    if (batch) {
+        eventEngine.trackEvent({
+            eventName: "payroll_generated",
+            module: "payroll",
+            feature: "generate_batch",
+            organizationId: workspace._id,
+            userId: req.userId,
+            requestId: req.id,
+            properties: { month, employeeCount: batch.employeeCount },
+            isCritical: true,
+        });
+    }
+
     return res.status(201).json(new ApiResponse(201, { batch }, "Payroll batch generated"));
 });
 
@@ -142,6 +158,20 @@ export const disburseBatchController = asyncHandler(async (req, res) => {
     const workspace = await getWorkspaceOrThrow(req.userId);
     const { id } = req.params;
     const batch = await disburseBatch(workspace._id, id);
+
+    if (batch) {
+        eventEngine.trackEvent({
+            eventName: "payroll_completed",
+            module: "payroll",
+            feature: "disburse_batch",
+            organizationId: workspace._id,
+            userId: req.userId,
+            requestId: req.id,
+            properties: { batchId: id, status: "paid" },
+            isCritical: true,
+        });
+    }
+
     return res.status(200).json(new ApiResponse(200, { batch }, "Payroll batch disbursed and paid"));
 });
 
@@ -199,17 +229,48 @@ export const updateSettingsController = asyncHandler(async (req, res) => {
 export const getPayrollDashboardSummaryController = asyncHandler(async (req, res) => {
     const workspace = await getWorkspaceOrThrow(req.userId);
     const workspaceId = workspace._id;
+    const workspaceCurrency = (workspace.currency || "PKR").toUpperCase();
 
-    // 1. Employee counts
-    const totalEmployees = await Employee.countDocuments({ workspace: workspaceId, employmentStatus: { $ne: "Terminated" } });
+    // 1. Employee counts & live currency distribution
+    const employees = await Employee.find({
+        workspace: workspaceId,
+        isDeleted: { $ne: true },
+        employmentStatus: { $ne: "Terminated" },
+    }).select("salaryCurrency currency salaryAmount basicSalary department").lean();
+    const totalEmployees = employees.length;
 
-    // 2. Batches
-    const batches = await PayrollBatch.find({ workspace: workspaceId }).sort({ month: -1 }).limit(6);
+    const empCurrMap = new Map();
+    employees.forEach((emp) => {
+        const curr = String(emp.salaryCurrency || emp.currency || workspaceCurrency).toUpperCase();
+        const entry = empCurrMap.get(curr) || { currency: curr, count: 0, totalBaseSalary: 0 };
+        entry.count += 1;
+        entry.totalBaseSalary += Number(emp.salaryAmount || emp.basicSalary || 0);
+        empCurrMap.set(curr, entry);
+    });
+    const employeeCurrencyBreakdown = Array.from(empCurrMap.values()).sort((a, b) => b.count - a.count);
+
+    // 2. Batches (populated & normalized with multi-currency breakdowns)
+    const allBatches = await getBatches(workspaceId);
+    const batches = allBatches.slice(0, 6);
     const latestBatch = batches[0] || null;
+    if (latestBatch && (!latestBatch.currencyBreakdown || latestBatch.currencyBreakdown.length === 0)) {
+        latestBatch.currencyBreakdown = buildBatchCurrencyBreakdown(latestBatch.entries || [], workspaceCurrency);
+    }
 
-    // 3. Loans
-    const activeLoans = await EmployeeLoan.find({ workspace: workspaceId, status: "active" });
+    // 3. Loans grouped by currency
+    const activeLoans = await EmployeeLoan.find({ workspace: workspaceId, status: "active" })
+        .populate("employee", "salaryCurrency currency")
+        .lean();
     const totalLoanBalance = activeLoans.reduce((sum, l) => sum + (l.remainingBalance || 0), 0);
+    const loanCurrMap = new Map();
+    activeLoans.forEach((l) => {
+        const curr = String(l.employee?.salaryCurrency || l.employee?.currency || l.currency || workspaceCurrency).toUpperCase();
+        const b = loanCurrMap.get(curr) || { currency: curr, amount: 0, count: 0 };
+        b.amount += Number(l.remainingBalance || 0);
+        b.count += 1;
+        loanCurrMap.set(curr, b);
+    });
+    const loanBalanceByCurrency = Array.from(loanCurrMap.values()).sort((a, b) => b.count - a.count || b.amount - a.amount);
 
     // 4. Monthly trends
     const trends = batches.map(b => ({
@@ -218,28 +279,42 @@ export const getPayrollDashboardSummaryController = asyncHandler(async (req, res
         deductions: b.totalDeductions,
         net: b.totalNetPay,
         status: b.status,
+        currencyBreakdown: b.currencyBreakdown || buildBatchCurrencyBreakdown(b.entries || [], workspaceCurrency),
     })).reverse();
 
     // 5. Department breakdown from latest batch
     const departmentBreakdown = {};
+    const deptCurrMap = new Map();
     if (latestBatch && Array.isArray(latestBatch.entries)) {
         latestBatch.entries.forEach(e => {
             const dept = e.department || "General";
+            const curr = String(e.currency || workspaceCurrency).toUpperCase();
             departmentBreakdown[dept] = (departmentBreakdown[dept] || 0) + e.netSalary;
+            const key = `${dept}::${curr}`;
+            const curItem = deptCurrMap.get(key) || { department: dept, currency: curr, totalNet: 0, count: 0 };
+            curItem.totalNet += Number(e.netSalary || 0);
+            curItem.count += 1;
+            deptCurrMap.set(key, curItem);
         });
     }
+    const departmentBreakdownByCurrency = Array.from(deptCurrMap.values());
 
     return res.status(200).json(
         new ApiResponse(
             200,
             {
+                workspaceCurrency,
                 totalEmployees,
                 latestBatch,
                 recentBatches: batches,
+                currencyBreakdown: latestBatch?.currencyBreakdown || [],
+                employeeCurrencyBreakdown,
                 totalLoanBalance,
+                loanBalanceByCurrency,
                 activeLoansCount: activeLoans.length,
                 trends,
                 departmentBreakdown,
+                departmentBreakdownByCurrency,
             },
             "Payroll dashboard summary loaded"
         )

@@ -25,7 +25,7 @@ export const createEmployeeSchema = Joi.object({
     phone: Joi.string().trim().min(6).max(40).required(),
     preferredName: optionalString(60),
     gender: Joi.string().valid("Male", "Female", "Other", "").default(""),
-    avatar: optionalString(500),
+    avatar: Joi.string().allow("", null).optional().default(""),
     manuallyPickedAvatar: Joi.boolean().default(false),
 
     // --- Employment ---
@@ -71,7 +71,7 @@ export const createEmployeeSchema = Joi.object({
 
     // --- Compensation ---
     salaryAmount: Joi.number().min(0).required(),
-    salaryCurrency: Joi.string().valid(...CURRENCIES).default("USD"),
+    salaryCurrency: Joi.string().trim().max(10).default("USD"),
     payFrequency: Joi.string().valid(...PAY_FREQUENCIES).required(),
     bankAccountName: optionalString(150),
     bankAccountNumber: optionalString(60),
@@ -129,7 +129,7 @@ export const updateEmployeeSchema = Joi.object({
     phone: Joi.string().trim().min(6).max(40),
     preferredName: Joi.string().trim().max(60).allow(""),
     gender: Joi.string().valid("Male", "Female", "Other", ""),
-    avatar: Joi.string().allow("").max(500),
+    avatar: Joi.string().allow("", null).optional(),
     manuallyPickedAvatar: Joi.boolean(),
 
     // Employment
@@ -175,7 +175,7 @@ export const updateEmployeeSchema = Joi.object({
 
     // Compensation
     salaryAmount: Joi.number().min(0),
-    salaryCurrency: Joi.string().valid(...CURRENCIES),
+    salaryCurrency: Joi.string().trim().max(10).allow(""),
     salaryChangeReason: optionalString(200),
     payFrequency: Joi.string().valid(...PAY_FREQUENCIES),
     bankAccountName: Joi.string().trim().max(150).allow(""),

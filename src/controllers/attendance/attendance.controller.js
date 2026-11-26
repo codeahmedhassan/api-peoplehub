@@ -16,6 +16,7 @@ import {
     exportAttendanceXlsx,
 } from "../../services/attendance/attendance-export.service.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
+import { eventEngine } from "../../services/observability/eventEngine.service.js";
 
 export const listAttendanceController = asyncHandler(async (req, res) => {
     const data = await listAttendance(req.userId, req.validatedQuery ?? req.query);
@@ -38,6 +39,19 @@ export const markAttendanceController = asyncHandler(async (req, res) => {
     if (results.length === 0 && errors.length > 0) {
         throw ApiError.badRequest(errors[0].message || "Failed to mark attendance.");
     }
+
+    if (results.length > 0) {
+        eventEngine.trackEvent({
+            eventName: "attendance_recorded",
+            module: "attendance",
+            feature: "mark_attendance",
+            organizationId: req.user?.activeWorkspace || req.workspace?._id,
+            userId: req.userId,
+            requestId: req.id,
+            properties: { count: results.length },
+        });
+    }
+
     return res.status(200).json(
         new ApiResponse(
             200,

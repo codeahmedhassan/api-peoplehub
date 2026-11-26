@@ -1,5 +1,7 @@
 import { env } from "../../config/env.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { errorTracker } from "../../services/observability/errorTracker.service.js";
+import { logger } from "../../services/observability/structuredLogger.service.js";
 
 export const notFound = (req, res, next) => {
     next(ApiError.notFound(`Route ${req.originalUrl} not found`));
@@ -32,6 +34,24 @@ export const errorHandler = (err, req, res, _next) => {
                 env.isProd ? "Something went wrong" : error.message
             );
         }
+    }
+
+    // Proprietary Error Tracking: Record the error internally for Super Admin
+    try {
+        errorTracker.trackError(err, req, {
+            originalErrorName: err.name,
+            originalErrorMessage: err.message,
+            statusCode: error.statusCode || 500,
+        });
+        logger.error(`Unhandled error on ${req.method} ${req.originalUrl}: ${err.message}`, {
+            requestId: req.id,
+            statusCode: error.statusCode || 500,
+            endpoint: req.originalUrl,
+            errorName: err.name,
+            stack: err.stack,
+        });
+    } catch {
+        // Observability failure must never prevent customer error response
     }
 
     const body = {

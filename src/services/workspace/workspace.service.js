@@ -3,6 +3,7 @@ import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { calculateWorkspaceStorageBytes } from "./plan.service.js";
 
 export async function setupWorkspace(userId, payload) {
     const { company, teamSize, theme } = payload;
@@ -33,6 +34,8 @@ export async function setupWorkspace(userId, payload) {
         user.setupCompletedAt = new Date();
         await user.save();
     }
+
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
 
     return workspace;
 }
@@ -67,8 +70,48 @@ export async function getWorkspaceForUser(userId) {
     return null;
 }
 
+async function assertWorkspaceAdminAuthority(userId, workspace, { requireCeo = false } = {}) {
+    const user = await User.findById(userId).select("role systemRole email").lean();
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+    const isOwner = Boolean(workspace.owner && workspace.owner.toString() === userId.toString());
+    const roleStr = String(user.role || "").toLowerCase();
+    const systemRoleStr = String(user.systemRole || "").toLowerCase();
+    let employeeRoleStr = "";
+    const emp = await Employee.findOne({
+        workspace: workspace._id,
+        $or: [
+            { linkedUser: user._id },
+            { loginEmail: user.email?.toLowerCase() },
+            { personalEmail: user.email?.toLowerCase() },
+        ],
+    }).select("systemRole designation department").lean();
+    if (emp?.systemRole) employeeRoleStr = emp.systemRole.toLowerCase();
+
+    const isCEO = Boolean(
+        isOwner ||
+        ["founder / ceo", "founder", "ceo", "administrator", "admin"].includes(roleStr) ||
+        ["admin", "administrator"].includes(systemRoleStr)
+    );
+    const isHR = Boolean(
+        !isCEO &&
+        (roleStr === "hr" ||
+            systemRoleStr === "hr" ||
+            employeeRoleStr === "hr" ||
+            /hr|human resource/i.test(emp?.designation || "") ||
+            /hr|human resource/i.test(emp?.department || ""))
+    );
+    if (requireCeo && !isCEO) {
+        throw ApiError.forbidden("Only the Founder / CEO can modify this workspace governance setting.");
+    }
+    if (!isCEO && !isHR) {
+        throw ApiError.forbidden("Only the Founder / CEO or HR can modify workspace configuration.");
+    }
+    return { isCEO, isHR };
+}
+
 export async function updateCompanyProfile(userId, patch) {
     const workspace = await getWorkspaceOrThrow(userId);
+    const { isCEO } = await assertWorkspaceAdminAuthority(userId, workspace);
 
     if (patch.companyName !== undefined) workspace.companyName = String(patch.companyName).trim();
     if (patch.industry !== undefined) workspace.industry = patch.industry;
@@ -76,10 +119,27 @@ export async function updateCompanyProfile(userId, patch) {
     if (patch.logo !== undefined) workspace.logo = patch.logo;
     if (patch.teamSize !== undefined) workspace.teamSize = patch.teamSize;
     if (patch.ceoFullControlWithHr !== undefined) {
+        if (!isCEO) {
+            throw ApiError.forbidden("Only the Founder / CEO can modify CEO operational override settings.");
+        }
         workspace.ceoFullControlWithHr = Boolean(patch.ceoFullControlWithHr);
+    }
+    if (patch.employmentStatuses !== undefined && Array.isArray(patch.employmentStatuses)) {
+        workspace.employmentStatuses = patch.employmentStatuses.map(String).map((s) => s.trim()).filter(Boolean);
+    }
+    if (patch.employmentTypes !== undefined && Array.isArray(patch.employmentTypes)) {
+        workspace.employmentTypes = patch.employmentTypes.map(String).map((s) => s.trim()).filter(Boolean);
+    }
+    if (patch.currencies !== undefined && Array.isArray(patch.currencies)) {
+        const cleaned = patch.currencies.map(String).map((s) => s.trim().toUpperCase()).filter(Boolean);
+        workspace.currencies = Array.from(new Set(cleaned));
+    }
+    if (patch.onboardingDismissed !== undefined) {
+        workspace.onboardingDismissed = Boolean(patch.onboardingDismissed);
     }
 
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -122,6 +182,7 @@ export async function updateCeoOverrideSetting(userId, enabled) {
 
     workspace.ceoFullControlWithHr = Boolean(enabled);
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -135,22 +196,31 @@ export async function updateFinancialSettings(userId, patch) {
         user?.role === "Founder / CEO" ||
         user?.role === "Administrator" ||
         (workspace.owner && workspace.owner.toString() === userId.toString());
+    const isHR = user?.role === "HR" || user?.systemRole === "HR";
 
-    if (!isCEO) {
-        throw ApiError.forbidden("Only the Founder / CEO can view or modify financial and payroll settings");
+    if (!isCEO && !isHR) {
+        throw ApiError.forbidden("Only the Founder / CEO or HR can view or modify financial and payroll settings");
     }
 
     if (patch.currency !== undefined) {
+        if (!isCEO) throw ApiError.forbidden("Only the Founder / CEO can change the base currency");
         workspace.currency = String(patch.currency).trim().toUpperCase();
     }
+    if (patch.currencies !== undefined && Array.isArray(patch.currencies)) {
+        const cleaned = patch.currencies.map(String).map((s) => s.trim().toUpperCase()).filter(Boolean);
+        workspace.currencies = Array.from(new Set(cleaned));
+    }
     if (patch.payrollCycle !== undefined) {
+        if (!isCEO) throw ApiError.forbidden("Only the Founder / CEO can change the payroll cycle");
         workspace.payrollCycle = String(patch.payrollCycle).trim();
     }
     if (patch.taxId !== undefined) {
+        if (!isCEO) throw ApiError.forbidden("Only the Founder / CEO can change the tax ID");
         workspace.taxId = String(patch.taxId).trim();
     }
 
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -564,6 +634,7 @@ export async function updateWorkspaceModules(userId, modules) {
     workspace.markModified("theme");
 
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -571,6 +642,7 @@ export async function updateWorkspaceModules(userId, modules) {
 
 export async function updatePayslipSettings(userId, patch) {
     const workspace = await getWorkspaceOrThrow(userId);
+    await assertWorkspaceAdminAuthority(userId, workspace);
 
     workspace.payslipSettings = {
         ...(workspace.payslipSettings || {}),
@@ -579,6 +651,7 @@ export async function updatePayslipSettings(userId, patch) {
     workspace.markModified("payslipSettings");
 
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -586,6 +659,7 @@ export async function updatePayslipSettings(userId, patch) {
 
 export async function updateWorkspaceIntegrations(userId, patch) {
     const workspace = await getWorkspaceOrThrow(userId);
+    await assertWorkspaceAdminAuthority(userId, workspace);
 
     workspace.integrations = {
         ...(workspace.integrations || {}),
@@ -594,6 +668,7 @@ export async function updateWorkspaceIntegrations(userId, patch) {
     workspace.markModified("integrations");
 
     await workspace.save();
+    calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
 }
 
@@ -1038,53 +1113,14 @@ export async function getEmployeeIdSettings(userId) {
     const counterDoc = await EmployeeCounter.findOne({ workspace: workspace._id }).lean();
     const currentSequence = counterDoc?.sequence || 0;
 
-    const DEFAULT_BRANCH_CODES = {
-        "Kohat": "KOH",
-        "Islamabad": "ISB",
-        "Lahore": "LHR",
-        "Karachi": "KHI",
-        "Peshawar": "PEW",
-        "Rawalpindi": "RWP",
-        "Faisalabad": "FSD",
-        "Multan": "MUX",
-        "New York": "NYC",
-        "London": "LDN",
-        "Dubai": "DXB",
-        "Berlin": "BER",
-        "Headquarters": "HQ",
-        "Main Office": "MAIN",
-        "Remote": "REM",
-    };
-
-    const DEFAULT_DEPT_CODES = {
-        "Information Technology": "IT",
-        "Engineering": "ENG",
-        "Human Resources": "HR",
-        "Finance": "FIN",
-        "Accounts": "ACC",
-        "Marketing": "MKT",
-        "Sales": "SLS",
-        "Operations": "OPS",
-        "Support": "SUP",
-        "Customer Support": "CS",
-        "Design": "DES",
-        "Administration": "ADMIN",
-        "Legal": "LGL",
-        "Quality Assurance": "QA",
-        "Procurement": "PROC",
-        "Logistics": "LOG",
-    };
-
     const safeWs = workspace.toSafeJSON();
     const rawConfig = safeWs.employeeIdConfig || {};
 
     const mergedBranchCodes = {
-        ...DEFAULT_BRANCH_CODES,
         ...(rawConfig.branchCodes || {}),
     };
 
     const mergedDeptCodes = {
-        ...DEFAULT_DEPT_CODES,
         ...(rawConfig.departmentCodes || {}),
     };
 

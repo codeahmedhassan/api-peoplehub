@@ -24,6 +24,8 @@ import {
     toggleTwoFactor,
     verifyTwoFactor,
     resendTwoFactor,
+    requestPasswordReset,
+    resetPasswordWithToken,
 } from "../../services/auth/auth.service.js";
 import {
     verifyAccessToken,
@@ -34,9 +36,21 @@ import {
 import { COOKIE_NAMES } from "../../constants/index.js";
 import { parseUserAgent, parseClientIp, maskEmail } from "../../utils/userAgent.js";
 import { User } from "../../model/auth/auth.model.js";
+import { eventEngine } from "../../services/observability/eventEngine.service.js";
 
 export const signup = asyncHandler(async (req, res) => {
-    const { user, pendingToken } = await registerUser(req.body);
+    const clientIpInfo = parseClientIp(req);
+    const ipAddress = typeof clientIpInfo === "string" ? clientIpInfo : clientIpInfo?.ip || "";
+    const { user, pendingToken } = await registerUser({ ...req.body, ipAddress });
+
+    eventEngine.trackEvent({
+        eventName: "user_signed_up",
+        module: "auth",
+        feature: "signup",
+        organizationId: user.activeWorkspace || user._id,
+        userId: user._id,
+        requestId: req.id,
+    });
 
     setSignupPendingCookie(res, pendingToken);
 
@@ -103,6 +117,9 @@ async function enrichUserWithWorkspace(user) {
                 verificationStatus: ws.verificationStatus || "approved",
                 rejectionReason: ws.rejectionReason || "",
                 verifiedAt: ws.verifiedAt || null,
+                accessRevoked: Boolean(ws.accessRevoked),
+                accessRevokedAt: ws.accessRevokedAt || null,
+                accessRevokedReason: ws.accessRevokedReason || "",
             };
 
             const isOwner = Boolean(ws.owner && ws.owner.toString() === user._id.toString());
@@ -250,6 +267,17 @@ export const refreshController = asyncHandler(async (req, res) => {
 });
 
 export const logoutController = asyncHandler(async (req, res) => {
+    if (req.userId) {
+        eventEngine.trackEvent({
+            eventName: "user_logged_out",
+            module: "auth",
+            feature: "logout",
+            organizationId: req.user?.activeWorkspace || req.userId,
+            userId: req.userId,
+            requestId: req.id,
+        });
+    }
+
     clearAuthCookies(res);
     clearSignupPendingCookie(res);
     clear2FAPendingCookie(res);
@@ -291,6 +319,16 @@ export const loginController = asyncHandler(async (req, res) => {
 
     const { user, accessToken, refreshToken } = result;
     setAuthCookies(res, { accessToken, refreshToken, rememberMe: Boolean(rememberMe) });
+
+    eventEngine.trackEvent({
+        eventName: "user_logged_in",
+        module: "auth",
+        feature: "login",
+        organizationId: user.activeWorkspace || user._id,
+        userId: user._id,
+        requestId: req.id,
+    });
+
     const enriched = await enrichUserWithWorkspace(user);
     return res
         .status(200)
@@ -471,4 +509,22 @@ export const updateNotificationPreferencesController = asyncHandler(async (req, 
     return res.status(200).json(new ApiResponse(200, {
         notificationPreferences: user.notificationPreferences,
     }, "Notification preferences saved"));
+});
+
+export const forgotPasswordController = asyncHandler(async (req, res) => {
+    await requestPasswordReset(req.body.email);
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            { sent: true },
+            "If an account exists for that email address, we have sent a password reset link."
+        )
+    );
+});
+
+export const resetPasswordController = asyncHandler(async (req, res) => {
+    const { token, newPassword, signOutAll } = req.body;
+    const result = await resetPasswordWithToken({ token, newPassword, signOutAll });
+    clearAuthCookies(res);
+    return res.status(200).json(new ApiResponse(200, result, "Password has been reset successfully."));
 });

@@ -2,6 +2,7 @@ import { AuditLog } from "../../model/audit/auditLog.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
 import { getCallerRoleContext } from "../employee/employee.service.js";
+import { resolvePlanConfig } from "../workspace/plan.service.js";
 import { ApiError } from "../../utils/ApiError.js";
 
 /**
@@ -78,6 +79,15 @@ export async function recordAuditLog({
  */
 export async function getWorkspaceAuditLogs(userId, query = {}) {
     const workspace = await getWorkspaceOrThrow(userId);
+
+    const planConfig = resolvePlanConfig(workspace.subscription);
+    if (!planConfig.features.auditLogs) {
+        throw ApiError.forbidden(
+            "Audit Logs are available on the Paid Pro ($49/mo) and Business Scale ($119/mo) plans. Please upgrade your plan to view audit logs.",
+            "PLAN_UPGRADE_REQUIRED"
+        );
+    }
+
     const { isCEO, isHR, caller } = await getCallerRoleContext(userId, workspace);
 
     const hasAuditPerm = Boolean(

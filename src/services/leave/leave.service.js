@@ -12,6 +12,7 @@ import {
 } from "../email/email.service.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { getDateInTimezone } from "../../utils/timezone.js";
+import { escapeRegex as escapeRegexInput } from "../../utils/security.js";
 import { buildManagerDirectReportsMongoFilter, isEmployeeDirectReport } from "../employee/employee.service.js";
 import {
     DEFAULT_LEAVE_TYPES,
@@ -800,13 +801,13 @@ export async function listLeaveRequests(userId, query = {}) {
         filter.leaveType = query.leaveType;
     }
     if (query.department && query.department !== "all") {
-        filter.department = new RegExp(String(query.department).trim(), "i");
+        filter.department = new RegExp(escapeRegexInput(String(query.department).trim()), "i");
     }
     if (query.month) {
-        filter.startDate = { $regex: new RegExp(`^${query.month}`) };
+        filter.startDate = { $regex: new RegExp(`^${escapeRegexInput(query.month)}`) };
     }
     if (query.search) {
-        const s = String(query.search).trim();
+        const s = escapeRegexInput(String(query.search).trim());
         filter.$and = filter.$and || [];
         filter.$and.push({
             $or: [
@@ -826,6 +827,7 @@ export async function listLeaveRequests(userId, query = {}) {
 
     const [requests, total] = await Promise.all([
         LeaveRequest.find(filter)
+            .populate("employee", "avatar")
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
@@ -834,14 +836,20 @@ export async function listLeaveRequests(userId, query = {}) {
     ]);
 
     return {
-        requests: requests.map((r) => ({
-            id: r._id.toString(),
-            category: r.category || "leave",
-            employeeId: r.employee ? r.employee.toString() : "",
-            employee: r.employee ? r.employee.toString() : "",
-            user: r.user ? r.user.toString() : "",
-            appliedBy: r.appliedBy ? r.appliedBy.toString() : "",
-            employeeName: r.employeeName,
+        requests: requests.map((r) => {
+            const empIdStr = r.employee && typeof r.employee === "object"
+                ? (r.employee._id ? r.employee._id.toString() : "")
+                : (r.employee ? r.employee.toString() : "");
+            const empAvatar = r.employee && typeof r.employee === "object" ? (r.employee.avatar || "") : "";
+            return {
+                id: r._id.toString(),
+                category: r.category || "leave",
+                employeeId: empIdStr,
+                employee: empIdStr,
+                employeeAvatar: empAvatar,
+                user: r.user ? r.user.toString() : "",
+                appliedBy: r.appliedBy ? r.appliedBy.toString() : "",
+                employeeName: r.employeeName,
             employeeCode: r.employeeCode,
             department: r.department,
             designation: r.designation,
@@ -872,7 +880,8 @@ export async function listLeaveRequests(userId, query = {}) {
             cancelledDates: r.cancelledDates || [],
             resubmissionCount: r.resubmissionCount || 0,
             resubmittedFrom: r.resubmittedFrom ? r.resubmittedFrom.toString() : null,
-        })),
+        };
+        }),
         total,
         page,
         limit,
@@ -1847,7 +1856,7 @@ export async function getLeaveCalendar(userId, monthStr) {
     const { workspace } = await getCallerContext(userId);
 
     const targetMonth = monthStr || new Date().toISOString().slice(0, 7);
-    const regex = new RegExp(`^${targetMonth}`);
+    const regex = new RegExp(`^${escapeRegexInput(targetMonth)}`);
 
     // Only officially approved leaves appear on the calendar
     const leaves = await LeaveRequest.find({
@@ -1859,6 +1868,7 @@ export async function getLeaveCalendar(userId, monthStr) {
             { attendanceDates: { $elemMatch: { $regex: regex } } },
         ],
     })
+        .populate("employee", "avatar")
         .sort({ startDate: 1 })
         .lean();
 
@@ -1873,10 +1883,16 @@ export async function getLeaveCalendar(userId, monthStr) {
         month: targetMonth,
         weekendDays,
         holidays,
-        leaves: leaves.map((r) => ({
-            id: r._id.toString(),
-            employeeId: r.employee ? r.employee.toString() : "",
-            employeeName: r.employeeName,
+        leaves: leaves.map((r) => {
+            const empIdStr = r.employee && typeof r.employee === "object"
+                ? (r.employee._id ? r.employee._id.toString() : "")
+                : (r.employee ? r.employee.toString() : "");
+            const empAvatar = r.employee && typeof r.employee === "object" ? (r.employee.avatar || "") : "";
+            return {
+                id: r._id.toString(),
+                employeeId: empIdStr,
+                employeeAvatar: empAvatar,
+                employeeName: r.employeeName,
             employeeCode: r.employeeCode,
             department: r.department,
             designation: r.designation,
@@ -1893,7 +1909,8 @@ export async function getLeaveCalendar(userId, monthStr) {
             attendanceMarked: Boolean(r.attendanceMarked),
             attendanceDates: r.attendanceDates || [],
             cancelledDates: r.cancelledDates || [],
-        })),
+        };
+        }),
     };
 }
 

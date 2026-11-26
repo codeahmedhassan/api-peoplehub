@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "create-super-admin": "node scripts/create_super_admin.js",
+    "seed-super-admin": "node scripts/seed_super_admin.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.658.0",

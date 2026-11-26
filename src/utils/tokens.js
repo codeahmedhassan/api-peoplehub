@@ -44,19 +44,19 @@ export function create2FAPendingToken(user, rememberMe = false) {
 }
 
 export function verify2FAPendingToken(token) {
-    const decoded = jwt.verify(token, env.jwt.accessSecret);
+    const decoded = jwt.verify(token, env.jwt.accessSecret, { algorithms: ["HS256"] });
     if (decoded.typ !== "2fa_pending") throw new Error("Wrong token type");
     return decoded;
 }
 
 export function verifyAccessToken(token) {
-    const decoded = jwt.verify(token, env.jwt.accessSecret);
+    const decoded = jwt.verify(token, env.jwt.accessSecret, { algorithms: ["HS256"] });
     if (decoded.typ !== "access") throw new Error("Wrong token type");
     return decoded;
 }
 
 export function verifyRefreshToken(token) {
-    const decoded = jwt.verify(token, env.jwt.refreshSecret);
+    const decoded = jwt.verify(token, env.jwt.refreshSecret, { algorithms: ["HS256"] });
     if (decoded.typ !== "refresh") throw new Error("Wrong token type");
     return decoded;
 }

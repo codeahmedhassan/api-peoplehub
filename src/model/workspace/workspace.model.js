@@ -127,49 +127,16 @@ const employeeIdConfigSchema = new Schema(
         yearSource: { type: String, default: "joining_year" }, // "joining_year" or "current_year"
         paddingDigits: { type: Number, default: 4, min: 1, max: 8 },
         startingNumber: { type: Number, default: 1, min: 1 },
-        defaultBranchCode: { type: String, default: "KOH", trim: true },
+        defaultBranchCode: { type: String, default: "", trim: true },
         branchCodes: {
             type: Map,
             of: String,
-            default: () => ({
-                "Kohat": "KOH",
-                "Islamabad": "ISB",
-                "Lahore": "LHR",
-                "Karachi": "KHI",
-                "Peshawar": "PEW",
-                "Rawalpindi": "RWP",
-                "Faisalabad": "FSD",
-                "Multan": "MUX",
-                "New York": "NYC",
-                "London": "LDN",
-                "Dubai": "DXB",
-                "Berlin": "BER",
-                "Headquarters": "HQ",
-                "Main Office": "MAIN",
-                "Remote": "REM",
-            }),
+            default: () => ({}),
         },
         departmentCodes: {
             type: Map,
             of: String,
-            default: () => ({
-                "Information Technology": "IT",
-                "Engineering": "ENG",
-                "Human Resources": "HR",
-                "Finance": "FIN",
-                "Accounts": "ACC",
-                "Marketing": "MKT",
-                "Sales": "SLS",
-                "Operations": "OPS",
-                "Support": "SUP",
-                "Customer Support": "CS",
-                "Design": "DES",
-                "Administration": "ADMIN",
-                "Legal": "LGL",
-                "Quality Assurance": "QA",
-                "Procurement": "PROC",
-                "Logistics": "LOG",
-            }),
+            default: () => ({}),
         },
     },
     { _id: false }
@@ -245,8 +212,11 @@ const workspaceSchema = new Schema(
 
         currency: {
             type: String,
-            enum: ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"],
             default: "USD",
+        },
+        currencies: {
+            type: [String],
+            default: ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"],
         },
 
         attendance: {
@@ -284,6 +254,18 @@ const workspaceSchema = new Schema(
             default: "pending",
             index: true,
         },
+        employmentStatuses: {
+            type: [String],
+            default: ["Active", "Probation", "Inactive"],
+        },
+        employmentTypes: {
+            type: [String],
+            default: ["Full Time", "Part Time", "Remote Job"],
+        },
+        onboardingDismissed: {
+            type: Boolean,
+            default: false,
+        },
         rejectionReason: {
             type: String,
             default: "",
@@ -304,6 +286,125 @@ const workspaceSchema = new Schema(
             type: Date,
             default: Date.now,
         },
+
+        subscription: {
+            plan: {
+                type: String,
+                enum: ["free", "growth", "pro", "enterprise", "paid"],
+                default: "free",
+                index: true,
+            },
+            planName: {
+                type: String,
+                default: "Starter Free Plan",
+            },
+            storageLimitBytes: {
+                type: Number,
+                default: 262144000, // 250 MB
+            },
+            maxEmployees: {
+                type: Number,
+                default: 20,
+            },
+            maxDevices: {
+                type: Number,
+                default: 2,
+            },
+            upgradedAt: {
+                type: Date,
+                default: null,
+            },
+        },
+
+        // Billing & Non-Destructive Access Suspension State (Paid Plans)
+        accessRevoked: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+        accessRevokedAt: {
+            type: Date,
+            default: null,
+        },
+        accessRevokedReason: {
+            type: String,
+            default: "",
+            trim: true,
+            maxlength: 1000,
+        },
+        accessRevokedBy: {
+            type: Schema.Types.ObjectId,
+            ref: "SuperAdmin",
+            default: null,
+        },
+        billing: {
+            paymentStatus: {
+                type: String,
+                enum: ["none", "unpaid", "paid", "revoked"],
+                default: "none",
+                index: true,
+            },
+            firstFollowUpSentAt: {
+                type: Date,
+                default: null,
+            },
+            firstFollowUpSentBy: {
+                type: Schema.Types.ObjectId,
+                ref: "SuperAdmin",
+                default: null,
+            },
+            secondFollowUpSentAt: {
+                type: Date,
+                default: null,
+            },
+            secondFollowUpSentBy: {
+                type: Schema.Types.ObjectId,
+                ref: "SuperAdmin",
+                default: null,
+            },
+            paidAt: {
+                type: Date,
+                default: null,
+            },
+            markedPaidBy: {
+                type: Schema.Types.ObjectId,
+                ref: "SuperAdmin",
+                default: null,
+            },
+            restoredAt: {
+                type: Date,
+                default: null,
+            },
+            notes: {
+                type: String,
+                default: "",
+                trim: true,
+                maxlength: 1000,
+            },
+        },
+
+        storageUsage: {
+            totalBytesUsed: {
+                type: Number,
+                default: 0,
+            },
+            databaseBytesUsed: {
+                type: Number,
+                default: 0,
+            },
+            s3BytesUsed: {
+                type: Number,
+                default: 0,
+            },
+            lastCalculatedAt: {
+                type: Date,
+                default: null,
+            },
+            breakdown: {
+                type: mongoose.Schema.Types.Mixed,
+                default: () => ({}),
+            },
+        },
     },
     { timestamps: true }
 );
@@ -317,14 +418,63 @@ workspaceSchema.methods.toSafeJSON = function () {
         timezone: this.timezone,
         teamSize: this.teamSize,
         theme: this.theme,
-        currency: this.currency,
+        currency: this.currency || "USD",
+        currencies: this.currencies && this.currencies.length > 0
+            ? this.currencies
+            : ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"],
         logo: this.logo || "",
         taxId: this.taxId || "",
+        employmentStatuses: this.employmentStatuses && this.employmentStatuses.length > 0
+            ? this.employmentStatuses
+            : ["Active", "Probation", "Inactive"],
+        employmentTypes: this.employmentTypes && this.employmentTypes.length > 0
+            ? this.employmentTypes
+            : ["Full Time", "Part Time", "Remote Job"],
+        onboardingDismissed: Boolean(this.onboardingDismissed),
         payrollCycle: this.payrollCycle || "Monthly (Last day of month)",
         ceoFullControlWithHr: this.ceoFullControlWithHr !== undefined ? Boolean(this.ceoFullControlWithHr) : true,
         verificationStatus: this.verificationStatus || "approved",
         rejectionReason: this.rejectionReason || "",
         verifiedAt: this.verifiedAt || null,
+        accessRevoked: Boolean(this.accessRevoked),
+        accessRevokedAt: this.accessRevokedAt || null,
+        accessRevokedReason: this.accessRevokedReason || "",
+        billing: {
+            paymentStatus:
+                this.billing?.paymentStatus ||
+                (["growth", "pro", "enterprise", "paid"].includes(this.subscription?.plan) ? "unpaid" : "none"),
+            firstFollowUpSentAt: this.billing?.firstFollowUpSentAt || null,
+            secondFollowUpSentAt: this.billing?.secondFollowUpSentAt || null,
+            paidAt: this.billing?.paidAt || null,
+            restoredAt: this.billing?.restoredAt || null,
+            notes: this.billing?.notes || "",
+        },
+        storageUsage: {
+            totalBytesUsed: typeof this.storageUsage?.totalBytesUsed === "number" ? this.storageUsage.totalBytesUsed : 0,
+            databaseBytesUsed: typeof this.storageUsage?.databaseBytesUsed === "number" ? this.storageUsage.databaseBytesUsed : 0,
+            s3BytesUsed: typeof this.storageUsage?.s3BytesUsed === "number" ? this.storageUsage.s3BytesUsed : 0,
+            lastCalculatedAt: this.storageUsage?.lastCalculatedAt || null,
+            breakdown: this.storageUsage?.breakdown || {},
+        },
+        subscription: {
+            plan: this.subscription?.plan || "free",
+            planName:
+                this.subscription?.planName ||
+                (this.subscription?.plan === "enterprise"
+                    ? "Business Scale Plan"
+                    : this.subscription?.plan === "growth"
+                    ? "Growth Plan"
+                    : this.subscription?.plan === "pro" || this.subscription?.plan === "paid"
+                    ? "Paid Pro Plan"
+                    : "Starter Free Plan"),
+            storageLimitBytes:
+                typeof this.subscription?.storageLimitBytes === "number"
+                    ? this.subscription.storageLimitBytes
+                    : 262144000,
+            maxEmployees: typeof this.subscription?.maxEmployees === "number" ? this.subscription.maxEmployees : 20,
+            maxDevices: typeof this.subscription?.maxDevices === "number" ? this.subscription.maxDevices : 2,
+            upgradedAt: this.subscription?.upgradedAt || null,
+        },
         payslipSettings: this.payslipSettings || {},
         integrations: this.integrations || {},
         attendance: {

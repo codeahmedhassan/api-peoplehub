@@ -1,7 +1,9 @@
 // src/services/storage/s3.service.js
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, CopyObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "../../config/env.js";
+
+export * from "./s3-paths.service.js";
 
 let client;
 function getClient() {
@@ -37,6 +39,29 @@ export async function uploadEncryptedBlob(key, buffer) {
     return key;
 }
 
+export async function uploadBlob(key, buffer, contentType = "application/octet-stream") {
+    await getClient().send(
+        new PutObjectCommand({
+            Bucket: env.s3.bucket,
+            Key: key,
+            Body: buffer,
+            ContentType: contentType,
+        })
+    );
+    return key;
+}
+
+export async function copyBlob(sourceKey, targetKey) {
+    await getClient().send(
+        new CopyObjectCommand({
+            Bucket: env.s3.bucket,
+            CopySource: `${env.s3.bucket}/${sourceKey}`,
+            Key: targetKey,
+        })
+    );
+    return targetKey;
+}
+
 export async function deleteEncryptedBlob(key) {
     await getClient().send(
         new DeleteObjectCommand({
@@ -69,6 +94,23 @@ export async function getInternalSignedUrl(key, expiresIn = 60) {
     return getSignedUrl(
         getClient(),
         new GetObjectCommand({ Bucket: env.s3.bucket, Key: key }),
+        { expiresIn }
+    );
+}
+
+/**
+ * Generate a short-lived signed URL for client-side encrypted upload.
+ * Client encrypts payload locally, then PUTs the encrypted octet-stream directly to S3.
+ * Hackers intercepting S3 or presigned URLs get ONLY encrypted ciphertext.
+ */
+export async function getPresignedUploadUrl(key, { contentType = "application/octet-stream", expiresIn = 300 } = {}) {
+    return getSignedUrl(
+        getClient(),
+        new PutObjectCommand({
+            Bucket: env.s3.bucket,
+            Key: key,
+            ContentType: contentType,
+        }),
         { expiresIn }
     );
 }

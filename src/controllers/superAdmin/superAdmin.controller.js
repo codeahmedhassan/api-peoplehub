@@ -10,6 +10,10 @@ import {
     getSuperAdminWorkspaces,
     approveWorkspace,
     rejectWorkspace,
+    updateWorkspacePlanBySuperAdmin,
+    sendWorkspacePaymentFollowUp,
+    revokeWorkspaceAccess,
+    restoreWorkspaceAccess,
     getSuperAdminAuditLogs,
 } from "../../services/superAdmin/superAdmin.service.js";
 
@@ -91,8 +95,61 @@ export const rejectWorkspaceController = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, result, "Workspace rejected and email sent to owner"));
 });
 
+export const updateWorkspacePlanController = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { plan, notes } = req.body;
+    const result = await updateWorkspacePlanBySuperAdmin({
+        workspaceId: id,
+        plan,
+        notes,
+        superAdminId: req.superAdminId,
+        req,
+    });
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            result,
+            `Workspace plan updated to ${result?.usage?.planName || plan}`
+        )
+    );
+});
+
 export const getAuditLogsController = asyncHandler(async (req, res) => {
     const { limit } = req.query;
     const logs = await getSuperAdminAuditLogs({ limit: Number(limit) || 100 });
     return res.status(200).json(new ApiResponse(200, { logs }, "Audit logs retrieved"));
+});
+
+export const sendPaymentFollowUpController = asyncHandler(async (req, res) => {
+    const { step } = req.body;
+    const data = await sendWorkspacePaymentFollowUp({
+        workspaceId: req.params.id,
+        step,
+        superAdminId: req.superAdminId,
+        req,
+    });
+    return res.status(200).json(new ApiResponse(200, data, `Payment follow-up #${Number(step)} sent`));
+});
+
+export const revokeWorkspaceAccessController = asyncHandler(async (req, res) => {
+    const { reason } = req.body || {};
+    const data = await revokeWorkspaceAccess({
+        workspaceId: req.params.id,
+        reason,
+        superAdminId: req.superAdminId,
+        req,
+    });
+    return res.status(200).json(new ApiResponse(200, data, "Organization access revoked (data preserved)"));
+});
+
+export const restoreWorkspaceAccessController = asyncHandler(async (req, res) => {
+    const { markPaid = true, notes = "" } = req.body || {};
+    const data = await restoreWorkspaceAccess({
+        workspaceId: req.params.id,
+        markPaid,
+        notes,
+        superAdminId: req.superAdminId,
+        req,
+    });
+    return res.status(200).json(new ApiResponse(200, data, "Organization billing settled and access active"));
 });

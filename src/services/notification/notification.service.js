@@ -4,6 +4,7 @@ import { Workspace } from "../../model/workspace/workspace.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { getWorkspaceForUser } from "../workspace/workspace.service.js";
+import { resolvePlanConfig } from "../workspace/plan.service.js";
 import { getDateInTimezone } from "../../utils/timezone.js";
 import { ApiError } from "../../utils/ApiError.js";
 
@@ -20,6 +21,20 @@ export async function createNotification({
     if (!workspaceId) return null;
 
     try {
+        const ws = await Workspace.findById(workspaceId).select("subscription").lean();
+        const isPaid = resolvePlanConfig(ws?.subscription).isPaid;
+        if (!isPaid) {
+            // Free / Basic plan: important notifications reserved for Paid Plan are suppressed
+            const paidNotificationTypes = new Set([
+                "employee_added",
+                "team_assignment",
+                "manager_transfer",
+            ]);
+            if (paidNotificationTypes.has(type)) {
+                return null;
+            }
+        }
+
         if (recipientId) {
             const user = await User.findById(recipientId).select("notificationPreferences").lean();
             if (user && user.notificationPreferences) {

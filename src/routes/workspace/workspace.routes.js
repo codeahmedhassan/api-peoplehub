@@ -16,6 +16,7 @@ import {
     appointCeoController,
     updateCeoOverrideController,
     replaceCeoController,
+    getWorkspacePlanController,
 } from "../../controllers/workspace/workspace.controller.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import { requireAuth } from "../../middleware/auth/auth.middleware.js";
@@ -74,5 +75,7 @@ router.patch(
 router.post("/appoint-ceo", requireAuth, appointCeoController);
 router.patch("/ceo-override", requireAuth, updateCeoOverrideController);
 router.post("/replace-ceo", requireAuth, replaceCeoController);
+
+router.get("/plan", requireAuth, getWorkspacePlanController);
 
 export default router;

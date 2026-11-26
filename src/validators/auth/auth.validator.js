@@ -69,3 +69,28 @@ export const loginSchema = Joi.object({
 
     rememberMe: Joi.boolean().default(false),
 });
+
+export const forgotPasswordSchema = Joi.object({
+    email: Joi.string().trim().lowercase().email().max(254).required().messages({
+        "string.email": "Please provide a valid email address",
+        "string.empty": "Email is required",
+    }),
+});
+
+export const resetPasswordSchema = Joi.object({
+    token: Joi.string().trim().required().messages({
+        "string.empty": "Reset token is required",
+    }),
+    newPassword: Joi.string()
+        .min(8)
+        .max(128)
+        .pattern(/[A-Z]/, "uppercase")
+        .pattern(/[a-z]/, "lowercase")
+        .pattern(/[0-9]/, "number")
+        .required()
+        .messages({
+            "string.min": "Password must be at least 8 characters",
+            "string.pattern.name": "Password must include at least one {#name}",
+        }),
+    signOutAll: Joi.boolean().default(true),
+});

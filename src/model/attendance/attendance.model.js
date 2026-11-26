@@ -109,6 +109,12 @@ attendanceRecordSchema.methods.toSafeJSON = function (populatedEmployee = null) 
             emp && typeof emp === "object" ? emp.designation ?? "" : undefined,
         branch:
             emp && typeof emp === "object" ? emp.workLocation ?? "" : undefined,
+        joiningDate:
+            emp && typeof emp === "object"
+                ? (emp.joiningDate instanceof Date
+                    ? emp.joiningDate.toISOString().slice(0, 10)
+                    : (typeof emp.joiningDate === "string" ? emp.joiningDate.slice(0, 10) : null))
+                : null,
 
         date: this.date,
         status: this.status,

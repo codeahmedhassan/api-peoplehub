@@ -80,13 +80,14 @@ const employeeSchema = new Schema(
         employmentStatus: {
             type: String,
             required: true,
-            enum: EMPLOYMENT_STATUSES,
             default: "Active",
+            trim: true,
         },
         employmentType: {
             type: String,
             required: true,
-            enum: EMPLOYMENT_TYPES,
+            default: "Full Time",
+            trim: true,
         },
         designation: { type: String, trim: true, maxlength: 120, default: "" },
         department: { type: String, required: true, trim: true, maxlength: 120 },
@@ -142,6 +143,8 @@ const employeeSchema = new Schema(
         // Step 5 — Compensation
         // -----------------------------------------------------------------
         salaryAmount: { type: Number, required: true, min: 0 },
+        salaryCurrency: { type: String, trim: true, default: "" },
+        currency: { type: String, trim: true, default: "" },
         payFrequency: { type: String, required: true, enum: PAY_FREQUENCIES },
         bankAccountName: { type: String, trim: true, maxlength: 150, default: "" },
         bankAccountNumber: { type: String, trim: true, maxlength: 60, default: "" },
@@ -387,6 +390,9 @@ employeeSchema.methods.toSafeJSON = function () {
         timeZone: this.timeZone,
 
         salaryAmount: this.salaryAmount,
+        basicSalary: this.salaryAmount,
+        salaryCurrency: this.salaryCurrency || this.currency || "",
+        currency: this.salaryCurrency || this.currency || "",
         payFrequency: this.payFrequency,
         payrollGroup: this.payrollGroup,
         bankName: this.bankName || "",

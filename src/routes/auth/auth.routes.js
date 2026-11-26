@@ -20,6 +20,8 @@ import {
     resend2FAController,
     getPending2FAController,
     getSessionsController,
+    forgotPasswordController,
+    resetPasswordController,
 } from "../../controllers/auth/auth.controller.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import {
@@ -28,11 +30,14 @@ import {
     resendLimiter,
     loginIpLimiter,
     loginEmailLimiter,
+    authChallengeLimiter,
 } from "../../middleware/rateLimit/rateLimit.middleware.js";
 import {
     signupSchema,
     verifyEmailSchema,
     loginSchema,
+    forgotPasswordSchema,
+    resetPasswordSchema,
 } from "../../validators/auth/auth.validator.js";
 import {
     requireAuth,
@@ -63,9 +68,9 @@ router.post("/resend-verification", resendLimiter, requirePendingSignup, resendV
 router.get("/pending-signup", requirePendingSignup, pendingSignupInfoController);
 
 // Two-Factor Authentication endpoints
-router.post("/2fa/verify", verify2FAController);
-router.post("/2fa/resend", resend2FAController);
-router.get("/2fa/pending", getPending2FAController);
+router.post("/2fa/verify", authChallengeLimiter, verify2FAController);
+router.post("/2fa/resend", resendLimiter, resend2FAController);
+router.get("/2fa/pending", authChallengeLimiter, getPending2FAController);
 router.patch("/2fa/toggle", requireAuth, toggleTwoFactorController);
 
 // Session endpoints
@@ -74,9 +79,11 @@ router.get("/session", sessionController);
 router.get("/sessions", requireAuth, getSessionsController);
 
 router.post("/logout", logoutController);
-router.post("/refresh", refreshController);
-router.post("/invite/verify", verifyInviteController);
-router.post("/invite/accept", acceptInviteController);
+router.post("/refresh", authChallengeLimiter, refreshController);
+router.post("/invite/verify", authChallengeLimiter, verifyInviteController);
+router.post("/invite/accept", authChallengeLimiter, acceptInviteController);
+router.post("/forgot-password", resendLimiter, validate(forgotPasswordSchema), forgotPasswordController);
+router.post("/reset-password", authChallengeLimiter, validate(resetPasswordSchema), resetPasswordController);
 
 router.patch("/profile", requireAuth, updateProfileController);
 router.post("/change-password", requireAuth, changePasswordController);

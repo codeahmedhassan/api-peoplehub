@@ -9,6 +9,7 @@ import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
 import { calculateAttendanceHoursAndDeduction } from "../../services/attendance/attendance.service.js";
+import { assertDeviceQuota } from "../../services/workspace/plan.service.js";
 
 // --- Admin: Get all devices ---
 export const getDevices = asyncHandler(async (req, res) => {
@@ -31,6 +32,7 @@ export const getDevices = asyncHandler(async (req, res) => {
 // --- Admin: Create device ---
 export const createDevice = asyncHandler(async (req, res) => {
     const workspace = await getWorkspaceOrThrow(req.userId);
+    await assertDeviceQuota(workspace._id);
     const { name, location } = req.body;
 
     const { rawKey, hash, prefix } = Device.generateApiKey();

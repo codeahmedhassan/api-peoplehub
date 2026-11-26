@@ -64,12 +64,13 @@ export const updateAttendanceSettingsSchema = Joi.object({
     .unknown(true);
 
 export const updateFinancialSchema = Joi.object({
-    currency: Joi.string().valid("USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD"),
+    currency: Joi.string().trim().max(10),
+    currencies: Joi.array().items(Joi.string().trim().max(10)),
     payrollCycle: Joi.string().trim().max(100),
     taxId: Joi.string().allow("").trim().max(100),
 })
     .min(1)
-    .unknown(false);
+    .unknown(true);
 
 export const updateEmployeeIdSettingsSchema = Joi.object({
     formatType: Joi.string().valid(

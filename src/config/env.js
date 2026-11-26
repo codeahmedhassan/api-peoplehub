@@ -1,6 +1,12 @@
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config();
+if (!process.env.MONGODB_URI) {
+    dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+}
 
 const required = [
     "MONGODB_URI",
@@ -36,16 +42,24 @@ export const env = {
     },
 
     cors: {
-        marketingUrl: process.env.MARKETING_URL || "http://localhost:3001",
-        adminUrl: process.env.ADMIN_URL || "http://localhost:3002",
-        superAdminUrl: process.env.SUPER_ADMIN_URL || "http://localhost:3003",
+        marketingUrl: (process.env.MARKETING_URL || "http://localhost:3001").replace(/\/$/, ""),
+        adminUrl: (process.env.ADMIN_URL || "http://localhost:3002").replace(/\/$/, ""),
+        superAdminUrl: (process.env.SUPER_ADMIN_URL || "http://localhost:3003").replace(/\/$/, ""),
     },
 
-    cookie: {
-        domain: process.env.COOKIE_DOMAIN || "localhost",
-        secure: process.env.COOKIE_SECURE === "true",
-        sameSite: process.env.COOKIE_SAME_SITE || (process.env.NODE_ENV === "production" ? "none" : "lax"),
-    },
+    cookie: (() => {
+        const isProduction = process.env.NODE_ENV === "production";
+        const secure = isProduction ? process.env.COOKIE_SECURE !== "false" : false;
+        const requestedSameSite = process.env.COOKIE_SAME_SITE || (isProduction ? "none" : "lax");
+        // Browsers reject SameSite=None when Secure=false
+        const sameSite = !secure && requestedSameSite === "none" ? "lax" : requestedSameSite;
+        const rawDomain = (process.env.COOKIE_DOMAIN || "localhost").trim();
+        return {
+            domain: rawDomain,
+            secure,
+            sameSite,
+        };
+    })(),
 
     smtp: {
         host: process.env.SMTP_HOST,
@@ -66,7 +80,7 @@ export const env = {
     // -------------------------------------------------------------------
     s3: {
         region: process.env.AWS_REGION || "us-east-1",
-        bucket: process.env.AWS_S3_BUCKET,
+        bucket: process.env.AWS_S3_BUCKET || "corpilance",
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     },

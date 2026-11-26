@@ -7,14 +7,10 @@
 export const EMPLOYMENT_TYPES = [
     "Full Time",
     "Part Time",
-    "Internship",
-    "Temporary / Fixed Term",
-    "Seasonal",
-    "Contract / Freelance",
-    "Casual / On Call",
+    "Remote Job",
 ];
 
-export const EMPLOYMENT_STATUSES = ["Active", "Probation", "On Leave", "Inactive", "Resigned", "Terminated", "Suspended"];
+export const EMPLOYMENT_STATUSES = ["Active", "Probation", "Inactive"];
 
 export const WORK_ARRANGEMENTS = ["On-site", "Remote", "Hybrid"];
 
@@ -24,25 +20,11 @@ export const CURRENCIES = ["USD", "EUR", "GBP", "PKR", "INR", "AED", "CAD", "AUD
 
 export const SYSTEM_ROLES = ["Admin", "Manager", "HR", "Employee", "Viewer", "Custom"];
 
-export const DEPARTMENTS = [
-    "Engineering",
-    "Design",
-    "Marketing",
-    "Sales",
-    "HR",
-    "Finance",
-    "Support",
-    "Operations",
-];
+export const DEPARTMENTS = [];
 
-export const MANAGERS = [
-    "Sarah Jenkins (HR Director)",
-    "David Park (Engineering Manager)",
-    "Lena Hoffmann (Design Lead)",
-    "Marcus Reid (Sales Director)",
-];
+export const MANAGERS = [];
 
-export const WORK_LOCATIONS = ["New York", "London", "Berlin", "Karachi", "Remote"];
+export const WORK_LOCATIONS = [];
 
 export const EMPLOYEE_CATEGORIES = [
     "Permanent",
@@ -69,7 +51,8 @@ export const DOCUMENT_TYPES = [
 // -------------------------------------------------------------------
 // Upload constraints
 // -------------------------------------------------------------------
-export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+// Upload ceiling for multer; per-tier file size caps (5/10/15/25 MB) are enforced in plan.service.js
+export const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB max ceiling
 export const MAX_FILES_PER_EMPLOYEE = 5;
 
 // MIME whitelist (server-side — don't trust the frontend accept attr)

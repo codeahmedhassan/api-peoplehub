@@ -16,7 +16,7 @@ export function createSignupPendingToken(user) {
 }
 
 export function verifySignupPendingToken(token) {
-    const decoded = jwt.verify(token, env.jwt.accessSecret);
+    const decoded = jwt.verify(token, env.jwt.accessSecret, { algorithms: ["HS256"] });
     if (decoded.purpose !== "pending-signup") {
         throw new Error("Invalid token purpose");
     }

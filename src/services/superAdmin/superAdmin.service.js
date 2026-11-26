@@ -9,6 +9,12 @@ import { User } from "../../model/auth/auth.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { sendMail } from "../../config/mailer.js";
 import { env } from "../../config/env.js";
+import {
+    updateWorkspaceSubscriptionPlan,
+    resolvePlanConfig,
+    VALID_PLAN_KEYS,
+} from "../workspace/plan.service.js";
+import { escapeRegex, escapeHtml } from "../../utils/security.js";
 
 const DUMMY_HASH = "$2a$12$e8Y5t1o3j2e5G9g0k2e4u.8X9y0Z1A2B3C4D5E6F7G8H9I0J1K2L3";
 
@@ -47,11 +53,11 @@ export function signSuperAdminRefreshToken(admin) {
 }
 
 export function verifySuperAdminAccessToken(token) {
-    return jwt.verify(token, SUPER_ADMIN_ACCESS_SECRET);
+    return jwt.verify(token, SUPER_ADMIN_ACCESS_SECRET, { algorithms: ["HS256"] });
 }
 
 export function verifySuperAdminRefreshToken(token) {
-    return jwt.verify(token, SUPER_ADMIN_REFRESH_SECRET);
+    return jwt.verify(token, SUPER_ADMIN_REFRESH_SECRET, { algorithms: ["HS256"] });
 }
 
 export function setSuperAdminCookies(res, { accessToken, refreshToken }) {
@@ -367,6 +373,57 @@ export async function logoutSuperAdmin(adminId, req) {
 // Workspace Verification Management
 // -------------------------------------------------------------------------
 
+const FOLLOW_UP_INTERVAL_DAYS = 3;
+const FOLLOW_UP_INTERVAL_MS = FOLLOW_UP_INTERVAL_DAYS * 24 * 60 * 60 * 1000;
+
+function buildBillingSummary(workspace, planCfg) {
+    const rawBilling = workspace?.billing || {};
+    const isPaidPlan = Boolean(planCfg?.isPaid);
+    const paymentStatus = !isPaidPlan
+        ? "none"
+        : workspace?.accessRevoked
+        ? "revoked"
+        : rawBilling.paymentStatus === "paid"
+        ? "paid"
+        : "unpaid";
+
+    const firstSentAt = rawBilling.firstFollowUpSentAt ? new Date(rawBilling.firstFollowUpSentAt) : null;
+    const secondSentAt = rawBilling.secondFollowUpSentAt ? new Date(rawBilling.secondFollowUpSentAt) : null;
+    const secondFollowUpEligibleAt = firstSentAt ? new Date(firstSentAt.getTime() + FOLLOW_UP_INTERVAL_MS) : null;
+    const now = Date.now();
+    const msUntilSecondFollowUp =
+        firstSentAt && !secondSentAt && secondFollowUpEligibleAt
+            ? Math.max(0, secondFollowUpEligibleAt.getTime() - now)
+            : 0;
+
+    return {
+        paymentStatus,
+        monthlyPriceUsd: planCfg?.monthlyPriceUsd || 0,
+        firstFollowUpSentAt: firstSentAt,
+        secondFollowUpSentAt: secondSentAt,
+        secondFollowUpEligibleAt,
+        canSendFirstFollowUp: Boolean(
+            isPaidPlan && paymentStatus === "unpaid" && !workspace?.accessRevoked && !firstSentAt
+        ),
+        canSendSecondFollowUp: Boolean(
+            isPaidPlan &&
+                paymentStatus === "unpaid" &&
+                !workspace?.accessRevoked &&
+                firstSentAt &&
+                !secondSentAt &&
+                msUntilSecondFollowUp === 0
+        ),
+        msUntilSecondFollowUp,
+        canRevokeAccess: Boolean(
+            isPaidPlan && !workspace?.accessRevoked && paymentStatus !== "paid" && secondSentAt
+        ),
+        canRestoreAccess: Boolean(workspace?.accessRevoked),
+        paidAt: rawBilling.paidAt || null,
+        restoredAt: rawBilling.restoredAt || null,
+        notes: rawBilling.notes || "",
+    };
+}
+
 export async function getSuperAdminWorkspaces({ status, search, page = 1, limit = 50 }) {
     const filter = {};
 
@@ -375,7 +432,7 @@ export async function getSuperAdminWorkspaces({ status, search, page = 1, limit 
     }
 
     if (search && search.trim()) {
-        const regex = new RegExp(search.trim(), "i");
+        const regex = new RegExp(escapeRegex(search.trim()), "i");
         filter.$or = [
             { companyName: regex },
             { industry: regex },
@@ -400,21 +457,45 @@ export async function getSuperAdminWorkspaces({ status, search, page = 1, limit 
     ]);
 
     return {
-        workspaces: workspaces.map((w) => ({
-            id: w._id,
-            companyName: w.companyName,
-            industry: w.industry,
-            timezone: w.timezone,
-            teamSize: w.teamSize,
-            currency: w.currency || "USD",
-            verificationStatus: w.verificationStatus || "approved",
-            rejectionReason: w.rejectionReason || "",
-            verifiedAt: w.verifiedAt,
-            verifiedBy: w.verifiedBy ? { fullName: w.verifiedBy.fullName, email: w.verifiedBy.email } : null,
-            owner: w.owner ? { id: w.owner._id, fullName: w.owner.fullName, email: w.owner.email, createdAt: w.owner.createdAt } : null,
-            createdAt: w.createdAt,
-            setupCompletedAt: w.setupCompletedAt,
-        })),
+        workspaces: workspaces.map((w) => {
+            const planCfg = resolvePlanConfig(w.subscription);
+            return {
+                id: w._id,
+                companyName: w.companyName,
+                industry: w.industry,
+                timezone: w.timezone,
+                teamSize: w.teamSize,
+                currency: w.currency || "USD",
+                verificationStatus: w.verificationStatus || "approved",
+                rejectionReason: w.rejectionReason || "",
+                verifiedAt: w.verifiedAt,
+                verifiedBy: w.verifiedBy ? { fullName: w.verifiedBy.fullName, email: w.verifiedBy.email } : null,
+                owner: w.owner ? { id: w.owner._id, fullName: w.owner.fullName, email: w.owner.email, createdAt: w.owner.createdAt } : null,
+                createdAt: w.createdAt,
+                setupCompletedAt: w.setupCompletedAt,
+                subscription: {
+                    plan: planCfg.plan,
+                    planName: planCfg.planName,
+                    isPaid: planCfg.isPaid,
+                    monthlyPriceUsd: planCfg.monthlyPriceUsd,
+                    storageLimitBytes: planCfg.storageLimitBytes,
+                    maxEmployees: planCfg.maxEmployees,
+                    maxDevices: planCfg.maxDevices,
+                },
+                accessRevoked: Boolean(w.accessRevoked),
+                accessRevokedAt: w.accessRevokedAt || null,
+                accessRevokedReason: w.accessRevokedReason || "",
+                billing: buildBillingSummary(w, planCfg),
+                storageUsage: {
+                    totalBytesUsed: w.storageUsage?.totalBytesUsed || 0,
+                    databaseBytesUsed: w.storageUsage?.databaseBytesUsed || 0,
+                    s3BytesUsed: w.storageUsage?.s3BytesUsed || 0,
+                    storageLimitBytes: planCfg.storageLimitBytes,
+                    lastCalculatedAt: w.storageUsage?.lastCalculatedAt || null,
+                    breakdown: w.storageUsage?.breakdown || {},
+                },
+            };
+        }),
         total,
         stats: {
             total: pendingCount + approvedCount + rejectedCount,
@@ -451,10 +532,10 @@ export async function approveWorkspace({ workspaceId, superAdminId, req }) {
                         </div>
                         <h2 style="margin: 0 0 12px 0; font-size: 22px; text-align: center; color: #0f172a;">Workspace Approved!</h2>
                         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">
-                            Hello <strong>${owner.fullName || "Admin"}</strong>,
+                            Hello <strong>${escapeHtml(owner.fullName || "Admin")}</strong>,
                         </p>
                         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
-                            We're excited to inform you that your workspace for <strong>${workspace.companyName}</strong> has been successfully reviewed and verified by the CorpiLance Super Admin compliance team.
+                            We're excited to inform you that your workspace for <strong>${escapeHtml(workspace.companyName)}</strong> has been successfully reviewed and verified by the CorpiLance Super Admin compliance team.
                         </p>
                         <div style="text-align: center; margin: 28px 0;">
                             <a href="${adminUrl}/" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 15px;">Access Admin Dashboard</a>
@@ -514,15 +595,15 @@ export async function rejectWorkspace({ workspaceId, reason, superAdminId, req }
                         </div>
                         <h2 style="margin: 0 0 12px 0; font-size: 22px; text-align: center; color: #0f172a;">Workspace Verification Status</h2>
                         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 16px 0;">
-                            Hello <strong>${owner.fullName || "Admin"}</strong>,
+                            Hello <strong>${escapeHtml(owner.fullName || "Admin")}</strong>,
                         </p>
                         <p style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">
-                            Thank you for registering <strong>${workspace.companyName}</strong> on CorpiLance. Following our compliance and security verification review, your workspace was not approved.
+                            Thank you for registering <strong>${escapeHtml(workspace.companyName)}</strong> on CorpiLance. Following our compliance and security verification review, your workspace was not approved.
                         </p>
                         <div style="background: #f8fafc; border-left: 4px solid #ef4444; padding: 16px; border-radius: 6px; margin: 20px 0;">
                             <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #dc2626; letter-spacing: 0.05em; margin-bottom: 4px;">Reason Provided by Compliance Team:</div>
                             <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5; font-style: italic;">
-                                "${cleanReason}"
+                                "${escapeHtml(cleanReason)}"
                             </p>
                         </div>
                         <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 20px 0 0 0;">
@@ -549,6 +630,336 @@ export async function rejectWorkspace({ workspaceId, reason, superAdminId, req }
     });
 
     return { success: true, workspace: workspace.toSafeJSON() };
+}
+
+export async function updateWorkspacePlanBySuperAdmin({ workspaceId, plan, notes = "", superAdminId, req }) {
+    if (!VALID_PLAN_KEYS.includes(plan)) {
+        throw ApiError.badRequest("Invalid subscription plan. Expected 'free', 'growth', 'pro', or 'enterprise'.");
+    }
+
+    const existing = await Workspace.findById(workspaceId).lean();
+    if (!existing) throw ApiError.notFound("Workspace not found");
+
+    const previousPlan = existing.subscription?.plan || "free";
+    const usage = await updateWorkspaceSubscriptionPlan(workspaceId, plan);
+    const updated = await Workspace.findById(workspaceId);
+
+    await recordAuditLog({
+        superAdmin: superAdminId,
+        action: "WORKSPACE_PLAN_UPDATED",
+        req,
+        details: {
+            workspaceId: existing._id,
+            companyName: existing.companyName,
+            previousPlan,
+            newPlan: usage.plan,
+            planName: usage.planName,
+            notes: typeof notes === "string" ? notes.trim() : "",
+        },
+    });
+
+    const planCfg = resolvePlanConfig(updated?.subscription);
+
+    return {
+        success: true,
+        usage,
+        workspace: updated ? updated.toSafeJSON() : null,
+        billing: updated ? buildBillingSummary(updated, planCfg) : null,
+    };
+}
+
+/**
+ * Sends a manual 1st or 2nd payment follow-up email for an unpaid paid-plan workspace.
+ * Enforces the 3-day waiting window between the 1st and 2nd follow-up emails.
+ */
+export async function sendWorkspacePaymentFollowUp({ workspaceId, step, superAdminId, req }) {
+    const parsedStep = Number(step);
+    if (parsedStep !== 1 && parsedStep !== 2) {
+        throw ApiError.badRequest("Follow-up step must be 1 or 2.");
+    }
+
+    const workspace = await Workspace.findById(workspaceId).populate("owner", "fullName email");
+    if (!workspace) {
+        throw ApiError.notFound("Workspace not found");
+    }
+
+    const planCfg = resolvePlanConfig(workspace.subscription);
+    if (!planCfg.isPaid) {
+        throw ApiError.badRequest("Payment follow-up emails only apply to paid subscription plans.");
+    }
+    if (workspace.accessRevoked) {
+        throw ApiError.badRequest("Workspace access is already revoked. Restore access once payment is received.");
+    }
+    if (workspace.billing?.paymentStatus === "paid") {
+        throw ApiError.badRequest("This organization has already been marked as paid.");
+    }
+
+    const ownerEmail = workspace.owner?.email;
+    if (!ownerEmail) {
+        throw ApiError.badRequest("Workspace owner email could not be resolved.");
+    }
+
+    const now = new Date();
+    const firstSentAt = workspace.billing?.firstFollowUpSentAt ? new Date(workspace.billing.firstFollowUpSentAt) : null;
+    const secondSentAt = workspace.billing?.secondFollowUpSentAt ? new Date(workspace.billing.secondFollowUpSentAt) : null;
+
+    if (parsedStep === 1) {
+        if (firstSentAt) {
+            throw ApiError.badRequest("The 1st payment follow-up email has already been sent for this billing cycle.");
+        }
+    } else {
+        if (!firstSentAt) {
+            throw ApiError.badRequest("You must send the 1st payment follow-up email before sending the 2nd follow-up.");
+        }
+        if (secondSentAt) {
+            throw ApiError.badRequest("The 2nd payment follow-up email has already been sent.");
+        }
+        const eligibleAt = new Date(firstSentAt.getTime() + FOLLOW_UP_INTERVAL_MS);
+        if (now.getTime() < eligibleAt.getTime()) {
+            const remainingMs = eligibleAt.getTime() - now.getTime();
+            const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+            throw ApiError.badRequest(
+                `The 2nd follow-up email can only be sent on the 3rd day after the 1st follow-up email (eligible on ${eligibleAt.toUTCString()}, ~${remainingHours}h remaining).`
+            );
+        }
+    }
+
+    const safeCompany = escapeHtml(workspace.companyName || "your organization");
+    const safeOwner = escapeHtml(workspace.owner?.fullName || "Administrator");
+    const safePlan = escapeHtml(planCfg.planName);
+    const priceLabel = `$${planCfg.monthlyPriceUsd}/month`;
+    const isSecond = parsedStep === 2;
+
+    const subject = isSecond
+        ? `[Final Payment Notice] 2nd Follow-Up: Settle ${workspace.companyName} ${planCfg.planName} Invoice to Prevent Access Suspension`
+        : `[Payment Reminder] 1st Follow-Up: Outstanding Balance for ${workspace.companyName} (${planCfg.planName})`;
+
+    const html = isSecond
+        ? `
+            <div style="font-family: Arial, sans-serif; color: #0f172a; max-width: 600px; margin: auto; padding: 28px; border: 1px solid #fecaca; border-radius: 12px; background: #fff;">
+                <p style="margin: 0 0 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #dc2626;">Final Payment Notice (2nd Follow-Up)</p>
+                <h2 style="margin: 0 0 16px; color: #0f172a;">Immediate Payment Required for ${safeCompany}</h2>
+                <p>Dear ${safeOwner},</p>
+                <p>This is our <strong>2nd and final follow-up</strong> (sent on day 3 following our initial reminder) regarding the unsettled payment for your active <strong>${safePlan}</strong> subscription (${priceLabel}).</p>
+                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; margin: 18px 0;">
+                    <p style="margin: 0; color: #991b1b; font-size: 14px;"><strong>Notice of Pending Access Suspension:</strong> If payment confirmation is not received shortly, Super Admin will temporarily revoke organization login access across your team until the balance is settled. All workspace records and employee data will remain safely preserved.</p>
+                </div>
+                <p>To settle your balance immediately and keep uninterrupted access:</p>
+                <ul style="color: #334155; font-size: 14px; line-height: 1.7;">
+                    <li><strong>WhatsApp Billing Desk:</strong> +92 344 5959967</li>
+                    <li><strong>Email:</strong> corpilance.org@gmail.com</li>
+                </ul>
+                <p style="margin-top: 24px; color: #64748b; font-size: 12px;">Regards,<br/>CorpiLance Billing & Platform Operations</p>
+            </div>
+        `
+        : `
+            <div style="font-family: Arial, sans-serif; color: #0f172a; max-width: 600px; margin: auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff;">
+                <p style="margin: 0 0 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #2563eb;">Billing Reminder (1st Follow-Up)</p>
+                <h2 style="margin: 0 0 16px; color: #0f172a;">Payment Follow-Up for ${safeCompany}</h2>
+                <p>Dear ${safeOwner},</p>
+                <p>Your workspace <strong>${safeCompany}</strong> is currently active on the <strong>${safePlan}</strong> (${priceLabel}), and payment for this billing period has not yet been confirmed in our records.</p>
+                <p>Please complete payment settlement at your earliest convenience via either official channel below:</p>
+                <ul style="color: #334155; font-size: 14px; line-height: 1.7;">
+                    <li><strong>WhatsApp Billing Desk:</strong> +92 344 5959967</li>
+                    <li><strong>Email:</strong> corpilance.org@gmail.com</li>
+                </ul>
+                <p style="font-size: 13px; color: #475569;">Please share your company name and transfer confirmation reference so we can mark your account as paid immediately.</p>
+                <p style="margin-top: 24px; color: #64748b; font-size: 12px;">Regards,<br/>CorpiLance Billing & Platform Operations</p>
+            </div>
+        `;
+
+    await sendMail({
+        to: ownerEmail,
+        subject,
+        html,
+    });
+
+    workspace.billing = workspace.billing || {};
+    workspace.billing.paymentStatus = "unpaid";
+    if (isSecond) {
+        workspace.billing.secondFollowUpSentAt = now;
+        workspace.billing.secondFollowUpSentBy = superAdminId;
+    } else {
+        workspace.billing.firstFollowUpSentAt = now;
+        workspace.billing.firstFollowUpSentBy = superAdminId;
+    }
+    await workspace.save();
+
+    await recordAuditLog({
+        superAdmin: superAdminId,
+        action: isSecond ? "WORKSPACE_FOLLOWUP_2_SENT" : "WORKSPACE_FOLLOWUP_1_SENT",
+        status: "warning",
+        req,
+        details: {
+            workspaceId: workspace._id.toString(),
+            companyName: workspace.companyName,
+            ownerEmail,
+            plan: planCfg.plan,
+            step: parsedStep,
+            sentAt: now,
+        },
+    });
+
+    return {
+        workspaceId: workspace._id.toString(),
+        step: parsedStep,
+        billing: buildBillingSummary(workspace, planCfg),
+    };
+}
+
+/**
+ * Revokes login & system access for an entire organization after both follow-ups.
+ * Strictly non-destructive: zero workspace, user, employee, document, or payroll records are deleted.
+ */
+export async function revokeWorkspaceAccess({ workspaceId, reason = "", superAdminId, req }) {
+    const workspace = await Workspace.findById(workspaceId).populate("owner", "fullName email");
+    if (!workspace) {
+        throw ApiError.notFound("Workspace not found");
+    }
+
+    const planCfg = resolvePlanConfig(workspace.subscription);
+    if (!planCfg.isPaid) {
+        throw ApiError.badRequest("Only paid-plan workspaces with unsettled balances can be suspended via billing revoke.");
+    }
+    if (workspace.billing?.paymentStatus === "paid") {
+        throw ApiError.badRequest("Cannot revoke access for a workspace whose payment is already marked as paid.");
+    }
+    if (workspace.accessRevoked) {
+        throw ApiError.badRequest("Organization access is already revoked.");
+    }
+    if (!workspace.billing?.firstFollowUpSentAt || !workspace.billing?.secondFollowUpSentAt) {
+        throw ApiError.badRequest("Both the 1st and 2nd payment follow-up emails must be sent before revoking organization access.");
+    }
+
+    const cleanReason =
+        String(reason || "").trim() ||
+        "Paid subscription balance remained unsettled after 1st and 2nd payment follow-up notices.";
+
+    const now = new Date();
+    workspace.accessRevoked = true;
+    workspace.accessRevokedAt = now;
+    workspace.accessRevokedReason = cleanReason;
+    workspace.accessRevokedBy = superAdminId;
+    workspace.billing = workspace.billing || {};
+    workspace.billing.paymentStatus = "revoked";
+    await workspace.save();
+
+    if (workspace.owner?.email) {
+        try {
+            await sendMail({
+                to: workspace.owner.email,
+                subject: `[Access Suspended] ${workspace.companyName} Workspace Access Temporarily Revoked`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; color: #0f172a; max-width: 600px; margin: auto; padding: 28px; border: 1px solid #fecaca; border-radius: 12px; background: #fff;">
+                        <h2 style="margin: 0 0 16px; color: #b91c1c;">Organization Access Temporarily Suspended</h2>
+                        <p>Dear ${escapeHtml(workspace.owner.fullName || "Administrator")},</p>
+                        <p>Login and system access for <strong>${escapeHtml(workspace.companyName)}</strong> (<strong>${escapeHtml(planCfg.planName)}</strong>) has been temporarily suspended due to an unresolved subscription payment following our 1st and 2nd follow-up reminders.</p>
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 18px 0;">
+                            <p style="margin: 0; color: #334155; font-size: 14px;"><strong>Your Data Is Safe:</strong> No employee profiles, payroll records, attendance logs, or encrypted documents have been deleted. Once payment is confirmed, your entire organization's access will be restored immediately.</p>
+                        </div>
+                        <p><strong>Settle Payment & Restore Access:</strong><br/>WhatsApp: +92 344 5959967<br/>Email: corpilance.org@gmail.com</p>
+                    </div>
+                `,
+            });
+        } catch (err) {
+            console.error("Failed to send workspace revocation notice:", err?.message);
+        }
+    }
+
+    await recordAuditLog({
+        superAdmin: superAdminId,
+        action: "WORKSPACE_ACCESS_REVOKED",
+        status: "warning",
+        req,
+        details: {
+            workspaceId: workspace._id.toString(),
+            companyName: workspace.companyName,
+            plan: planCfg.plan,
+            reason: cleanReason,
+            nonDestructive: true,
+        },
+    });
+
+    return {
+        workspaceId: workspace._id.toString(),
+        accessRevoked: true,
+        accessRevokedAt: now,
+        accessRevokedReason: cleanReason,
+        billing: buildBillingSummary(workspace, planCfg),
+    };
+}
+
+/**
+ * Restores access for a previously revoked organization (and optionally marks invoice paid).
+ */
+export async function restoreWorkspaceAccess({ workspaceId, markPaid = true, notes = "", superAdminId, req }) {
+    const workspace = await Workspace.findById(workspaceId).populate("owner", "fullName email");
+    if (!workspace) {
+        throw ApiError.notFound("Workspace not found");
+    }
+
+    const planCfg = resolvePlanConfig(workspace.subscription);
+    const now = new Date();
+    const wasRevoked = Boolean(workspace.accessRevoked);
+
+    workspace.accessRevoked = false;
+    workspace.accessRevokedAt = null;
+    workspace.accessRevokedReason = "";
+    workspace.billing = workspace.billing || {};
+    workspace.billing.restoredAt = now;
+
+    if (markPaid) {
+        workspace.billing.paymentStatus = planCfg.isPaid ? "paid" : "none";
+        workspace.billing.paidAt = now;
+        workspace.billing.markedPaidBy = superAdminId;
+    } else if (planCfg.isPaid && workspace.billing.paymentStatus === "revoked") {
+        workspace.billing.paymentStatus = "unpaid";
+    }
+
+    if (notes && String(notes).trim()) {
+        workspace.billing.notes = String(notes).trim();
+    }
+
+    await workspace.save();
+
+    if (wasRevoked && workspace.owner?.email) {
+        try {
+            await sendMail({
+                to: workspace.owner.email,
+                subject: `[Access Restored] ${workspace.companyName} Workspace Is Active Again`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; color: #0f172a; max-width: 600px; margin: auto; padding: 28px; border: 1px solid #bbf7d0; border-radius: 12px; background: #fff;">
+                        <h2 style="margin: 0 0 16px; color: #059669;">Organization Access Restored</h2>
+                        <p>Dear ${escapeHtml(workspace.owner.fullName || "Administrator")},</p>
+                        <p>Thank you for settling your subscription payment. Full system access for <strong>${escapeHtml(workspace.companyName)}</strong> (${escapeHtml(planCfg.planName)}) has been restored.</p>
+                        <p>All team members (CEO, HR, Managers, and Employees) can sign in immediately with all data intact.</p>
+                    </div>
+                `,
+            });
+        } catch (err) {
+            console.error("Failed to send workspace restoration notice:", err?.message);
+        }
+    }
+
+    await recordAuditLog({
+        superAdmin: superAdminId,
+        action: wasRevoked ? "WORKSPACE_ACCESS_RESTORED" : "WORKSPACE_PAYMENT_MARKED_PAID",
+        status: "success",
+        req,
+        details: {
+            workspaceId: workspace._id.toString(),
+            companyName: workspace.companyName,
+            plan: planCfg.plan,
+            markPaid: Boolean(markPaid),
+            wasRevoked,
+        },
+    });
+
+    return {
+        workspaceId: workspace._id.toString(),
+        accessRevoked: false,
+        billing: buildBillingSummary(workspace, planCfg),
+    };
 }
 
 export async function getSuperAdminAuditLogs({ limit = 100 }) {

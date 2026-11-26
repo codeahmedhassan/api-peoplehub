@@ -7,6 +7,8 @@ import { hashPassword, verifyPassword } from "../../utils/password.js";
 import {
     createEmailVerifyToken,
     verifyEmailVerifyToken,
+    createPasswordResetToken,
+    verifyPasswordResetToken,
 } from "../../utils/emailToken.js";
 import { createSignupPendingToken } from "../../utils/signupToken.js";
 import {
@@ -16,7 +18,7 @@ import {
     create2FAPendingToken,
     verify2FAPendingToken,
 } from "../../utils/tokens.js";
-import { sendVerificationEmail, send2FACodeEmail } from "../email/email.service.js";
+import { sendVerificationEmail, send2FACodeEmail, sendPasswordResetEmail } from "../email/email.service.js";
 import { parseUserAgent, parseClientIp, maskEmail, upsertActiveSession } from "../../utils/userAgent.js";
 
 // Dummy hash used to make failed logins constant-time.
@@ -24,7 +26,7 @@ import { parseUserAgent, parseClientIp, maskEmail, upsertActiveSession } from ".
 const DUMMY_HASH = "$2a$12$w5cF.BK8CellV78J3lVxGu3ILPlhhzKWSmW4Z2lgNKUAWere3RGb6";
 
 export async function registerUser(payload) {
-    const { fullName, email, password, company, companySize, role } = payload;
+    const { fullName, email, password, company, companySize, role, ipAddress = "" } = payload;
 
     const existing = await User.findOne({ email }).lean();
     if (existing) {
@@ -32,6 +34,7 @@ export async function registerUser(payload) {
     }
 
     const hashed = await hashPassword(password);
+    const clientIp = typeof ipAddress === "object" ? String(ipAddress?.ip || "") : String(ipAddress || "");
 
     const user = await User.create({
         fullName,
@@ -40,6 +43,14 @@ export async function registerUser(payload) {
         company,
         companySize,
         role,
+        legalAcceptance: {
+            termsAccepted: true,
+            termsVersion: "1.0",
+            privacyAccepted: true,
+            privacyVersion: "1.0",
+            acceptedAt: new Date(),
+            ipAddress: clientIp,
+        },
     });
 
     const verifyToken = createEmailVerifyToken(user);
@@ -92,6 +103,21 @@ export async function getSessionUser(userId) {
     return user || null;
 }
 
+export async function assertUserWorkspaceNotRevoked(userOrId) {
+    const userId = typeof userOrId === "string" ? userOrId : userOrId?._id;
+    if (!userId) return;
+    const { getWorkspaceForUser } = await import("../workspace/workspace.service.js");
+    const ws = await getWorkspaceForUser(userId);
+    if (ws?.accessRevoked) {
+        const reasonText = ws.accessRevokedReason ? ` (${ws.accessRevokedReason})` : "";
+        const err = ApiError.forbidden(
+            `Organization access for "${ws.companyName || "your workspace"}" has been temporarily suspended pending subscription payment resolution. All your records remain safely intact. Contact CorpiLance Billing (+92 344 5959967 / corpilance.org@gmail.com) to restore access.${reasonText}`
+        );
+        err.code = "WORKSPACE_ACCESS_REVOKED";
+        throw err;
+    }
+}
+
 /**
  * Refresh a user's session using a valid refresh token.
  * Generates a new access token and a NEW refresh token (rotation).
@@ -115,6 +141,8 @@ export async function refreshSession(refreshToken) {
     if (user.status === "inactive" || user.status === "suspended") {
         throw ApiError.forbidden("Your account has been deactivated or suspended");
     }
+
+    await assertUserWorkspaceNotRevoked(user);
 
     const rememberMe = Boolean(decoded.rem);
     const sessionId = decoded.sid || crypto.randomUUID();
@@ -175,6 +203,8 @@ export async function loginUser({ email, password, req = null, rememberMe = fals
         const pendingToken = createSignupPendingToken(user);
         return { requiresVerification: true, user, pendingToken };
     }
+
+    await assertUserWorkspaceNotRevoked(user);
 
     // Check if Two-Factor Authentication is enabled for this specific user
     if (user.twoFactorEnabled) {
@@ -264,6 +294,8 @@ export async function verifyTwoFactor({ token, code, req = null, rememberMe = fa
     }
 
     // Verification succeeded
+    await assertUserWorkspaceNotRevoked(user);
+
     user.twoFactorCode = null;
     user.twoFactorExpires = null;
     user.twoFactorAttempts = 0;
@@ -397,6 +429,7 @@ export async function acceptInvite(token, password) {
         }
     } catch {}
 
+    await assertUserWorkspaceNotRevoked(user);
     await user.save();
 
     return user;
@@ -469,4 +502,54 @@ export async function updateNotificationPreferences(userId, prefs) {
     await user.save();
 
     return user;
+}
+
+export async function requestPasswordReset(email) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    const user = await User.findOne({ email: cleanEmail }).select("+password");
+    if (!user || !user.password) return;
+    if (user.status === "suspended" || user.status === "inactive") return;
+
+    const token = createPasswordResetToken(user);
+    try {
+        await sendPasswordResetEmail(user, token);
+    } catch (err) {
+        console.error("Failed to send password reset email:", err.message);
+    }
+}
+
+export async function resetPasswordWithToken({ token, newPassword, signOutAll = true }) {
+    let decoded;
+    try {
+        decoded = verifyPasswordResetToken(token);
+    } catch {
+        throw ApiError.badRequest("This password reset link is invalid or has expired. Please request a new one.");
+    }
+
+    const user = await User.findById(decoded.sub).select("+password");
+    if (!user) {
+        throw ApiError.badRequest("This password reset link is invalid or has expired.");
+    }
+    if (user.status === "suspended" || user.status === "inactive") {
+        throw ApiError.forbidden("This account is deactivated or suspended.");
+    }
+    if ((decoded.ver ?? 0) !== (user.tokenVersion ?? 0)) {
+        throw ApiError.badRequest("This password reset link has already been used. Please request a new one.");
+    }
+
+    user.password = await hashPassword(newPassword);
+    user.emailVerified = true;
+    if (user.status === "pending") user.status = "active";
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    user.twoFactorCode = null;
+    user.twoFactorExpires = null;
+    user.twoFactorAttempts = 0;
+    if (signOutAll !== false) {
+        user.activeSessions = [];
+    }
+    await user.save();
+
+    return { message: "Password updated successfully" };
 }

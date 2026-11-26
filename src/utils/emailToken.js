@@ -22,3 +22,24 @@ export function verifyEmailVerifyToken(token) {
     }
     return decoded;
 }
+
+export function createPasswordResetToken(user) {
+    return jwt.sign(
+        {
+            sub: user._id.toString(),
+            email: user.email,
+            ver: user.tokenVersion ?? 0,
+            purpose: "password-reset",
+        },
+        env.emailVerify.secret,
+        { expiresIn: "1h" }
+    );
+}
+
+export function verifyPasswordResetToken(token) {
+    const decoded = jwt.verify(token, env.emailVerify.secret);
+    if (decoded.purpose !== "password-reset") {
+        throw new Error("Invalid token purpose");
+    }
+    return decoded;
+}

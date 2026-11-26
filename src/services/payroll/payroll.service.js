@@ -10,7 +10,9 @@ import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { LeaveRequest } from "../../model/leave/leave.model.js";
 import { calculateAllLeaveBalances } from "../leave/leave.service.js";
+import { resolvePlanConfig } from "../workspace/plan.service.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { evaluateSafeArithmetic } from "../../utils/security.js";
 
 // -------------------------------------------------------------------
 // Standard Seed Components for New Workspaces
@@ -31,7 +33,7 @@ const DEFAULT_WORKSPACE_COMPONENTS = [
         includeInOvertime: true,
         showOnPayslip: true,
         frequency: "monthly",
-        status: "active",
+        status: "inactive",
         isSystem: true,
     },
     {
@@ -49,96 +51,7 @@ const DEFAULT_WORKSPACE_COMPONENTS = [
         includeInOvertime: false,
         showOnPayslip: true,
         frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "MED",
-        name: "Medical Allowance",
-        type: "earning",
-        category: "Allowance",
-        description: "Medical allowance (10% of basic, tax-exempt under local law)",
-        calculationMethod: "percent_basic",
-        percentage: 10,
-        taxExemptionLimit: 10000,
-        roundingRule: "nearest_integer",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: true,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "CONV",
-        name: "Travelling / Conveyance Allowance",
-        type: "earning",
-        category: "Allowance",
-        description: "Fixed monthly conveyance allowance",
-        calculationMethod: "fixed",
-        fixedAmount: 8000,
-        roundingRule: "none",
-        isRecurring: true,
-        isTaxable: true,
-        includeInGross: true,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "FOOD",
-        name: "Food & Meal Allowance",
-        type: "earning",
-        category: "Allowance",
-        description: "Meal and food allowance",
-        calculationMethod: "fixed",
-        fixedAmount: 5000,
-        roundingRule: "none",
-        isRecurring: true,
-        isTaxable: true,
-        includeInGross: true,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "UTL",
-        name: "Utility Allowance",
-        type: "earning",
-        category: "Allowance",
-        description: "5% of Basic + House Rent",
-        calculationMethod: "percent_components",
-        percentage: 5,
-        selectedComponentCodes: ["BASIC", "HRA"],
-        roundingRule: "nearest_integer",
-        isRecurring: true,
-        isTaxable: true,
-        includeInGross: true,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "OT",
-        name: "Overtime Allowance",
-        type: "earning",
-        category: "Variable Pay",
-        description: "Overtime pay per approved hour",
-        calculationMethod: "unit_x_rate",
-        ratePerUnit: 600,
-        defaultUnits: 8,
-        unitName: "Hours",
-        roundingRule: "nearest_integer",
-        isRecurring: false,
-        isTaxable: true,
-        includeInGross: true,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
+        status: "inactive",
     },
     {
         code: "TAX",
@@ -155,41 +68,7 @@ const DEFAULT_WORKSPACE_COMPONENTS = [
         includeInOvertime: false,
         showOnPayslip: true,
         frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "PF_EMP",
-        name: "Employee Provident Fund",
-        type: "deduction",
-        category: "Retirement",
-        description: "Employee retirement savings contribution (10% of basic)",
-        calculationMethod: "percent_basic",
-        percentage: 10,
-        roundingRule: "nearest_integer",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "EOBI_EMP",
-        name: "EOBI Employee Contribution",
-        type: "deduction",
-        category: "Statutory",
-        description: "EOBI employee share",
-        calculationMethod: "fixed",
-        fixedAmount: 370,
-        roundingRule: "none",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
+        status: "inactive",
     },
     {
         code: "UNPAID_ABSENCE",
@@ -208,77 +87,7 @@ const DEFAULT_WORKSPACE_COMPONENTS = [
         includeInOvertime: false,
         showOnPayslip: true,
         frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "PF_EMPR",
-        name: "Employer Provident Fund",
-        type: "employer_contribution",
-        category: "Retirement",
-        description: "Matching 10% employer provident fund (Company CTC)",
-        calculationMethod: "percent_basic",
-        percentage: 10,
-        roundingRule: "nearest_integer",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "EOBI_EMPR",
-        name: "Employer EOBI Contribution",
-        type: "employer_contribution",
-        category: "Statutory",
-        description: "Employer 5% EOBI contribution",
-        calculationMethod: "fixed",
-        fixedAmount: 1850,
-        roundingRule: "none",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "FUEL_REIMB",
-        name: "Fuel & Mileage Reimbursement",
-        type: "reimbursement",
-        category: "Expense Claim",
-        description: "Travel mileage claim (liters × rate)",
-        calculationMethod: "unit_x_rate",
-        ratePerUnit: 290,
-        defaultUnits: 25,
-        unitName: "Liters",
-        roundingRule: "nearest_integer",
-        isRecurring: false,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
-    },
-    {
-        code: "INTERNET_REIMB",
-        name: "Internet & Mobile Reimbursement",
-        type: "reimbursement",
-        category: "Expense Claim",
-        description: "Work-from-home communication reimbursement",
-        calculationMethod: "fixed",
-        fixedAmount: 4000,
-        roundingRule: "none",
-        isRecurring: true,
-        isTaxable: false,
-        includeInGross: false,
-        includeInOvertime: false,
-        showOnPayslip: true,
-        frequency: "monthly",
-        status: "active",
+        status: "inactive",
     },
 ];
 
@@ -296,8 +105,7 @@ function evaluateFormula(expr, variables) {
             sanitized = sanitized.replace(regWithBraces, String(val)).replace(regWord, String(val));
         }
         if (/[^0-9\s+\-*/%().]/.test(sanitized)) return 0;
-        const res = new Function(`"use strict"; return (${sanitized});`)();
-        const num = Number(res);
+        const num = evaluateSafeArithmetic(sanitized);
         return isNaN(num) || !isFinite(num) ? 0 : num;
     } catch {
         return 0;
@@ -603,6 +411,18 @@ export async function getComponents(workspaceId) {
 }
 
 export async function createComponent(workspaceId, data) {
+    const ws = await Workspace.findById(workspaceId).select("subscription").lean();
+    const planConfig = resolvePlanConfig(ws?.subscription);
+    if (planConfig.maxSalaryComponents !== null) {
+        const count = await SalaryComponent.countDocuments({ workspace: workspaceId });
+        if (count >= planConfig.maxSalaryComponents) {
+            throw ApiError.forbidden(
+                `${planConfig.planName} is limited to a maximum of ${planConfig.maxSalaryComponents} salary components. Upgrade to Paid Pro ($49/mo) for unlimited salary components.`,
+                "PLAN_UPGRADE_REQUIRED"
+            );
+        }
+    }
+
     const existing = await SalaryComponent.findOne({
         workspace: workspaceId,
         code: data.code.toUpperCase(),
@@ -690,41 +510,16 @@ export function calculateTenureAndProration({
         joiningIso = new Date(employee.createdAt).toISOString().slice(0, 10);
     }
 
-    // If employee has attendance records earlier in the month, adopt earliest punch as effective start
-    const validAttDates = (attendanceRecords || [])
-        .map((r) => r.date)
-        .filter((d) => d && d >= fromIso && d <= toIso)
-        .sort();
-    if (validAttDates.length > 0 && validAttDates[0] < joiningIso) {
-        joiningIso = validAttDates[0];
-    }
-
-    // 1. Pre-joining non-employed days in this period [fromIso, toIso]
-    let preJoiningDays = 0;
-    if (joiningIso > toIso) {
-        preJoiningDays = effectiveWorkingDays;
-    } else if (joiningIso > fromIso) {
-        const joinDay = parseInt(joiningIso.split("-")[2], 10);
-        preJoiningDays = Math.max(0, joinDay - 1);
-    }
-
-    // 2. Post-contract end days (if employee resigned or contract ended this month)
-    let postExitDays = 0;
-    if (employee.contractEndDate) {
-        const exitIso = new Date(employee.contractEndDate).toISOString().slice(0, 10);
-        if (exitIso >= fromIso && exitIso <= toIso) {
-            const exitDay = parseInt(exitIso.split("-")[2], 10);
-            postExitDays = Math.max(0, effectiveWorkingDays - exitDay);
-        }
-    }
-
+    // Do NOT adopt pre-joining auto attendance records; employee joining date is strictly authoritative
     const isNewHireThisMonth = joiningIso >= fromIso && joiningIso <= toIso;
-    const employedDays = Math.max(0, effectiveWorkingDays - preJoiningDays - postExitDays);
+
+    // effectiveWorkingDays passed into this function is already the employee's tenure working days
+    const employedDays = effectiveWorkingDays;
 
     return {
         joiningIso,
-        preJoiningDays,
-        postExitDays,
+        preJoiningDays: 0,
+        postExitDays: 0,
         employedDays,
         isNewHireThisMonth,
     };
@@ -913,13 +708,13 @@ export async function calculateEmployeeLeaveAndAbsenceBreakdown(
 
     // 6. Compute unexcused absences and unpaid days from real-time records + tenure
     const unexcusedAbsenceDays = Math.round((recordedAbsentCount + (recordedHalfDayCount * 0.5)) * 10) / 10;
-    const calculatedPresentDays = Math.max(
-        0,
-        Math.round((tenure.employedDays - unexcusedAbsenceDays - unpaidLeaveDays) * 10) / 10
-    );
     const totalUnpaidDays = Math.min(
         effectiveWorkingDays,
-        Math.round((effectiveWorkingDays - calculatedPresentDays) * 10) / 10
+        Math.round((unexcusedAbsenceDays + unpaidLeaveDays) * 10) / 10
+    );
+    const calculatedPresentDays = Math.max(
+        0,
+        Math.round((effectiveWorkingDays - totalUnpaidDays) * 10) / 10
     );
 
     return {
@@ -1024,6 +819,33 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
     let batchCTC = 0;
 
     for (const emp of employees) {
+        // Resolve employee joining date
+        let empJoiningIso = fromIso;
+        if (emp.joiningDate) {
+            empJoiningIso = new Date(emp.joiningDate).toISOString().slice(0, 10);
+        } else if (emp.createdAt) {
+            empJoiningIso = new Date(emp.createdAt).toISOString().slice(0, 10);
+        }
+
+        // Calculate tenure-based working days for this employee
+        let empWorkingDays = effectiveWorkingDays;
+        if (empJoiningIso.startsWith(month)) {
+            const joinDay = parseInt(empJoiningIso.split("-")[2], 10);
+            if (isCurrentOngoingMonth) {
+                if (joinDay > elapsedDays) {
+                    empWorkingDays = 0;
+                } else {
+                    empWorkingDays = Math.max(1, elapsedDays - joinDay + 1);
+                }
+            } else {
+                if (joinDay > 1) {
+                    empWorkingDays = Math.max(1, monthBaseDays - joinDay);
+                }
+            }
+        } else if (empJoiningIso > toIso) {
+            empWorkingDays = 0;
+        }
+
         // Check if HR provided manual adjustments for this employee
         const manualAdj = effectiveAdjustments.find(
             (a) =>
@@ -1031,6 +853,10 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
                 (a.id && String(a.id) === String(emp._id)) ||
                 (a.employee && String(a.employee) === String(emp._id))
         );
+
+        if (manualAdj && manualAdj.workingDays !== undefined && manualAdj.workingDays !== null) {
+            empWorkingDays = Number(manualAdj.workingDays);
+        }
 
         let presentDays = 0;
         let unpaidDays = 0;
@@ -1047,7 +873,7 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
                 emp._id,
                 fromIso,
                 toIso,
-                effectiveWorkingDays,
+                empWorkingDays,
                 emp
             );
             breakdownResult = breakdown;
@@ -1061,15 +887,15 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
             overtimeHours = Math.max(0, Number(manualAdj.overtimeHours) || 0);
             presentDays =
                 manualAdj.presentDays !== undefined && manualAdj.presentDays !== null
-                    ? Math.max(0, Math.min(effectiveWorkingDays, Number(manualAdj.presentDays)))
-                    : Math.max(0, effectiveWorkingDays - unpaidDays - paidLeaveDays);
+                    ? Math.max(0, Math.min(empWorkingDays, Number(manualAdj.presentDays)))
+                    : Math.max(0, empWorkingDays - unpaidDays - paidLeaveDays);
         } else {
             const breakdown = await calculateEmployeeLeaveAndAbsenceBreakdown(
                 workspace,
                 emp._id,
                 fromIso,
                 toIso,
-                effectiveWorkingDays,
+                empWorkingDays,
                 emp
             );
             breakdownResult = breakdown;
@@ -1113,12 +939,12 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
         // Run calculation engine for this employee based on effective working days
         const basePay = emp.salaryAmount || emp.basicSalary || (emp.grossSalary ? Math.round(emp.grossSalary * 0.5) : 75000);
         const fullMonthlyDailyRate = basePay / monthBaseDays;
-        const periodBasic = Math.round(fullMonthlyDailyRate * effectiveWorkingDays);
+        const periodBasic = Math.round(fullMonthlyDailyRate * empWorkingDays);
 
         const empWorkingHours = emp.workingHours || (parseFloat(emp.workSchedule) || settings.dailyWorkingHours || 8);
         const calculated = calculateEmployeePayroll(components, {
             basicSalary: periodBasic,
-            workingDays: effectiveWorkingDays,
+            workingDays: empWorkingDays,
             monthBaseDays,
             presentDays,
             unpaidDays,
@@ -1130,6 +956,24 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
             manualInputs,
             employee: emp,
         });
+
+        // Ensure functional overtime payout if hours worked > 0
+        const hourlyRate = Math.round(fullMonthlyDailyRate / (empWorkingHours || 8));
+        const otPayout = overtimeHours * Math.round(hourlyRate * 1.5);
+        if (overtimeHours > 0 && !calculated.earnings.some((e) => e.code === "OT" || e.name?.toLowerCase().includes("overtime"))) {
+            calculated.earnings.push({
+                code: "OT",
+                name: "Overtime Allowance",
+                type: "earning",
+                amount: otPayout,
+                formulaApplied: `${overtimeHours} hrs × 1.5 × ${hourlyRate}/hr`,
+                isTaxable: true,
+                includeInGross: true,
+            });
+            calculated.totalEarnings += otPayout;
+            calculated.grossSalary += otPayout;
+            calculated.netSalary += otPayout;
+        }
 
         // Add loan deduction row if applicable
         if (loanDeductionTotal > 0) {
@@ -1164,11 +1008,11 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
         // 1. Calculate Daily Rate based on workspace payroll settings
         let dailyRate = 0;
         if (settings.unpaidAbsenceMethod === "gross_30") {
-            dailyRate = calculated.grossSalary / effectiveWorkingDays;
+            dailyRate = calculated.grossSalary / (empWorkingDays || 30);
         } else if (settings.unpaidAbsenceMethod === "custom_rate") {
             dailyRate = settings.customDailyAbsenceRate || 0;
         } else {
-            dailyRate = calculated.basicSalary / effectiveWorkingDays;
+            dailyRate = calculated.basicSalary / (empWorkingDays || 30);
         }
 
         // 2. Excess / Unpaid Leave Deduction (deduct salary if employee takes leaves they don't have)
@@ -1221,22 +1065,24 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
             calculated.deductions.splice(existingAbsenceIdx, 1);
         }
 
-
+        const employeeCurrency = emp.salaryCurrency || emp.currency || workspace.currency || "PKR";
 
         entries.push({
             employee: emp._id,
             employeeId: emp.employeeId,
             employeeName: `${emp.firstName || ""} ${emp.lastName || ""}`.trim() || emp.name,
             employeeEmail: emp.workEmail || emp.personalEmail || emp.loginEmail || "",
+            employeeAvatar: emp.avatar || "",
             department: emp.department || "General",
             designation: emp.designation || "Staff",
             branch: emp.workLocation || emp.branch || "Head Office",
-            workingDays: effectiveWorkingDays,
+            workingDays: empWorkingDays,
             presentDays,
             paidLeaveDays,
             unpaidLeaveDays,
             unpaidDays,
             overtimeHours,
+            currency: employeeCurrency,
             isManualAdjustment: Boolean(manualAdj?.isManualAdjustment),
             basicSalary: calculated.basicSalary,
             earnings: calculated.earnings,
@@ -1280,6 +1126,8 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
         ? `${payFrequency} Payroll - ${new Date(year, mStr - 1).toLocaleString("en-US", { month: "long" })} ${year}`
         : `${new Date(year, mStr - 1).toLocaleString("en-US", { month: "long" })} ${year} Regular Payroll`;
 
+    const currencyBreakdown = buildBatchCurrencyBreakdown(entries, workspace.currency || "PKR");
+
     const batchData = {
         workspace: workspaceId,
         month,
@@ -1298,6 +1146,7 @@ export async function generatePayrollBatch(workspaceId, month, userId, adjustmen
         totalEmployerContributions: batchEmployer,
         totalReimbursements: batchReimbursement,
         totalCostToCompany: batchCTC,
+        currencyBreakdown,
         entries,
     };
 
@@ -1377,7 +1226,51 @@ export async function getPayrollFrequencyAlerts(workspaceId, month) {
     };
 }
 
-function sanitizeBatch(batch) {
+export function buildBatchCurrencyBreakdown(entries = [], fallbackCurrency = "PKR") {
+    const map = new Map();
+    for (const e of entries || []) {
+        const curr = String(
+            e.currency ||
+                (e.employee && typeof e.employee === "object"
+                    ? e.employee.salaryCurrency || e.employee.currency
+                    : "") ||
+                fallbackCurrency ||
+                "PKR"
+        ).toUpperCase();
+
+        const bucket = map.get(curr) || {
+            currency: curr,
+            employeeCount: 0,
+            totalBasic: 0,
+            totalGross: 0,
+            totalEarnings: 0,
+            totalDeductions: 0,
+            totalEmployerContributions: 0,
+            totalReimbursements: 0,
+            totalNetPay: 0,
+            totalCostToCompany: 0,
+        };
+
+        bucket.employeeCount += 1;
+        bucket.totalBasic += Number(e.basicSalary) || 0;
+        bucket.totalGross += Number(e.grossSalary) || 0;
+        bucket.totalEarnings += Number(e.totalEarnings) || 0;
+        bucket.totalDeductions += Number(e.totalDeductions) || 0;
+        bucket.totalEmployerContributions += Number(e.totalEmployerContributions) || 0;
+        bucket.totalReimbursements += Number(e.totalReimbursements) || 0;
+        bucket.totalNetPay += Number(e.netSalary) || 0;
+        bucket.totalCostToCompany += Number(e.costToCompany) || 0;
+        map.set(curr, bucket);
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+        if (b.employeeCount !== a.employeeCount) return b.employeeCount - a.employeeCount;
+        if (b.totalNetPay !== a.totalNetPay) return b.totalNetPay - a.totalNetPay;
+        return a.currency.localeCompare(b.currency);
+    });
+}
+
+function sanitizeBatch(batch, fallbackCurrency = "PKR") {
     if (!batch) return batch;
     const b = batch.toObject ? batch.toObject() : batch;
     if (Array.isArray(b.entries)) {
@@ -1399,22 +1292,33 @@ function sanitizeBatch(batch) {
                 if (!e.employeeEmail) {
                     e.employeeEmail = emp.workEmail || emp.personalEmail || emp.loginEmail || emp.linkedUser?.email || "";
                 }
+                if (!e.employeeAvatar && emp.avatar) {
+                    e.employeeAvatar = emp.avatar;
+                }
+                if (!e.currency) {
+                    e.currency = emp.salaryCurrency || emp.currency || fallbackCurrency;
+                }
                 e.employee = emp._id || e.employee;
             }
         });
         b.entries.sort((a, b) => (a.employeeName || "").localeCompare(b.employeeName || ""));
+        b.currencyBreakdown = buildBatchCurrencyBreakdown(b.entries, fallbackCurrency);
     }
     return b;
 }
 
 export async function getBatches(workspaceId) {
-    const batches = await PayrollBatch.find({ workspace: workspaceId })
-        .populate({
-            path: "entries.employee",
-            select: "workEmail personalEmail loginEmail linkedUser",
-            populate: { path: "linkedUser", select: "email" },
-        })
-        .lean();
+    const [batches, workspace] = await Promise.all([
+        PayrollBatch.find({ workspace: workspaceId })
+            .populate({
+                path: "entries.employee",
+                select: "workEmail personalEmail loginEmail linkedUser avatar salaryCurrency currency",
+                populate: { path: "linkedUser", select: "email" },
+            })
+            .lean(),
+        Workspace.findById(workspaceId).select("currency").lean(),
+    ]);
+    const wsCurrency = (workspace?.currency || "PKR").toUpperCase();
 
     const statusRank = { disbursed: 4, approved: 3, review: 2, draft: 1, cancelled: 0 };
     batches.sort((a, b) => {
@@ -1424,7 +1328,7 @@ export async function getBatches(workspaceId) {
         return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
     });
 
-    return batches.map(sanitizeBatch);
+    return batches.map((b) => sanitizeBatch(b, wsCurrency));
 }
 
 export async function getBatchByMonth(workspaceId, month, payFrequency) {
@@ -1432,15 +1336,19 @@ export async function getBatchByMonth(workspaceId, month, payFrequency) {
     if (payFrequency && payFrequency !== "All") {
         filter.payFrequency = payFrequency;
     }
-    const batches = await PayrollBatch.find(filter)
-        .populate({
-            path: "entries.employee",
-            select: "workEmail personalEmail loginEmail linkedUser",
-            populate: { path: "linkedUser", select: "email" },
-        })
-        .lean();
+    const [batches, workspace] = await Promise.all([
+        PayrollBatch.find(filter)
+            .populate({
+                path: "entries.employee",
+                select: "workEmail personalEmail loginEmail linkedUser avatar salaryCurrency currency",
+                populate: { path: "linkedUser", select: "email" },
+            })
+            .lean(),
+        Workspace.findById(workspaceId).select("currency").lean(),
+    ]);
 
     if (!batches || batches.length === 0) return null;
+    const wsCurrency = (workspace?.currency || "PKR").toUpperCase();
 
     const statusRank = { disbursed: 4, approved: 3, review: 2, draft: 1, cancelled: 0 };
     batches.sort((a, b) => {
@@ -1449,21 +1357,25 @@ export async function getBatchByMonth(workspaceId, month, payFrequency) {
         return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
     });
 
-    return sanitizeBatch(batches[0]);
+    return sanitizeBatch(batches[0], wsCurrency);
 }
 
 export async function getBatchById(workspaceId, batchId) {
-    const batch = await PayrollBatch.findOne({ _id: batchId, workspace: workspaceId })
-        .populate({
-            path: "entries.employee",
-            select: "workEmail personalEmail loginEmail linkedUser",
-            populate: { path: "linkedUser", select: "email" },
-        })
-        .lean();
+    const [batch, workspace] = await Promise.all([
+        PayrollBatch.findOne({ _id: batchId, workspace: workspaceId })
+            .populate({
+                path: "entries.employee",
+                select: "workEmail personalEmail loginEmail linkedUser avatar salaryCurrency currency",
+                populate: { path: "linkedUser", select: "email" },
+            })
+            .lean(),
+        Workspace.findById(workspaceId).select("currency").lean(),
+    ]);
     if (!batch) {
         throw ApiError.notFound("Payroll batch not found.");
     }
-    return sanitizeBatch(batch);
+    const wsCurrency = (workspace?.currency || "PKR").toUpperCase();
+    return sanitizeBatch(batch, wsCurrency);
 }
 
 export async function approveBatch(workspaceId, batchId, userId) {
@@ -1526,11 +1438,14 @@ export async function approveBatch(workspaceId, batchId, userId) {
         console.error("Non-fatal notification error on payroll disburse:", notifErr.message);
     }
 
-    return batch;
+    return sanitizeBatch(batch, workspace?.currency || "PKR");
 }
 
 export async function disburseBatch(workspaceId, batchId) {
-    const batch = await PayrollBatch.findOne({ _id: batchId, workspace: workspaceId });
+    const [batch, workspace] = await Promise.all([
+        PayrollBatch.findOne({ _id: batchId, workspace: workspaceId }),
+        Workspace.findById(workspaceId).select("currency").lean(),
+    ]);
     if (!batch) throw ApiError.notFound("Payroll batch not found.");
     if (batch.status === "disbursed") throw ApiError.badRequest("Batch is already disbursed.");
 
@@ -1570,7 +1485,7 @@ export async function disburseBatch(workspaceId, batchId) {
 
     batch.markModified("entries");
     await batch.save();
-    return sanitizeBatch(batch);
+    return sanitizeBatch(batch, workspace?.currency || "PKR");
 }
 
 export async function emailPayslip(workspaceId, { batchId, employeeId, month }) {
@@ -1629,7 +1544,26 @@ export async function emailPayslip(workspaceId, { batchId, employeeId, month }) 
     // 4. Load workspace details for branding
     const workspace = await Workspace.findById(workspaceId).lean();
     const companyName = workspace?.companyName || "Organization";
-    const currency = workspace?.currency || "PKR";
+    const currency = entry.currency || emp?.salaryCurrency || emp?.currency || workspace?.currency || "PKR";
+    const payslipSettings = workspace?.payslipSettings || {};
+
+    // Filter components according to payslipSettings
+    const allComps = await SalaryComponent.find({ workspace: workspaceId }).lean();
+    const compByCode = new Map(allComps.map((c) => [String(c.code || "").toUpperCase(), c]));
+    const enforceVisibleIds =
+        Boolean(payslipSettings.componentVisibilityConfigured) ||
+        (Array.isArray(payslipSettings.visibleComponentIds) && payslipSettings.visibleComponentIds.length > 0);
+    const visibleSet = new Set((payslipSettings.visibleComponentIds || []).map(String));
+
+    const filterItems = (items) => {
+        return (items || []).filter((item) => {
+            const comp = compByCode.get(String(item.code || "").toUpperCase());
+            if (!comp) return true;
+            if (comp.showOnPayslip === false) return false;
+            if (enforceVisibleIds && !visibleSet.has(String(comp._id))) return false;
+            return true;
+        });
+    };
 
     // 5. Send payslip email
     const { sendPayslipEmail } = await import("../email/email.service.js");
@@ -1646,14 +1580,15 @@ export async function emailPayslip(workspaceId, { batchId, employeeId, month }) 
         presentDays: entry.presentDays || 30,
         unpaidDays: entry.unpaidDays || 0,
         basicSalary: entry.basicSalary || 0,
-        earnings: entry.earnings || [],
-        deductions: entry.deductions || [],
+        earnings: filterItems(entry.earnings || []),
+        deductions: filterItems(entry.deductions || []),
         grossSalary: entry.grossSalary || 0,
         totalDeductions: entry.totalDeductions || 0,
         netSalary: entry.netSalary || 0,
         paymentMethod: entry.paymentMethod === "cash" ? "Cash" : entry.paymentMethod === "cheque" ? "Cheque" : "Direct Bank Transfer",
         bankName: entry.bankAccountDetails?.bankName || "Not Configured",
         accountNumber: entry.bankAccountDetails?.accountNumber || "Not Configured",
+        payslipSettings,
     });
 
     return {
@@ -1670,14 +1605,30 @@ export async function emailPayslip(workspaceId, { batchId, employeeId, month }) 
 // -------------------------------------------------------------------
 
 export async function getLoans(workspaceId) {
-    return EmployeeLoan.find({ workspace: workspaceId })
-        .populate("employee", "firstName lastName employeeId department designation")
-        .sort({ createdAt: -1 });
+    const [workspace, loans] = await Promise.all([
+        Workspace.findById(workspaceId).select("currency").lean(),
+        EmployeeLoan.find({ workspace: workspaceId })
+            .populate("employee", "firstName lastName employeeId department designation avatar salaryCurrency currency")
+            .sort({ createdAt: -1 })
+            .lean(),
+    ]);
+    const wsCurrency = (workspace?.currency || "PKR").toUpperCase();
+    return loans.map((loan) => ({
+        ...loan,
+        currency: String(
+            loan.employee?.salaryCurrency || loan.employee?.currency || loan.currency || wsCurrency
+        ).toUpperCase(),
+    }));
 }
 
 export async function createLoan(workspaceId, data) {
-    const emp = await Employee.findOne({ _id: data.employeeId, workspace: workspaceId });
+    const [emp, workspace] = await Promise.all([
+        Employee.findOne({ _id: data.employeeId, workspace: workspaceId }),
+        Workspace.findById(workspaceId).select("currency").lean(),
+    ]);
     if (!emp) throw ApiError.notFound("Employee not found.");
+
+    const loanCurrency = (emp.salaryCurrency || emp.currency || data.currency || workspace?.currency || "PKR").toUpperCase();
 
     const loan = await EmployeeLoan.create({
         workspace: workspaceId,
@@ -1690,21 +1641,34 @@ export async function createLoan(workspaceId, data) {
         remainingBalance: data.principalAmount,
         monthlyInstallment: data.monthlyInstallment,
         startMonth: data.startMonth || new Date().toISOString().slice(0, 7),
+        currency: loanCurrency,
         status: "active",
         reason: data.reason || "",
     });
 
+    await loan.populate("employee", "firstName lastName employeeId department designation avatar salaryCurrency currency");
     return loan;
 }
 
 export async function updateLoanStatus(workspaceId, loanId, status) {
-    const loan = await EmployeeLoan.findOneAndUpdate(
-        { _id: loanId, workspace: workspaceId },
-        { status },
-        { new: true }
-    );
+    const [workspace, loan] = await Promise.all([
+        Workspace.findById(workspaceId).select("currency").lean(),
+        EmployeeLoan.findOneAndUpdate(
+            { _id: loanId, workspace: workspaceId },
+            { status },
+            { new: true }
+        )
+            .populate("employee", "firstName lastName employeeId department designation avatar salaryCurrency currency")
+            .lean(),
+    ]);
     if (!loan) throw ApiError.notFound("Loan record not found.");
-    return loan;
+    const wsCurrency = (workspace?.currency || "PKR").toUpperCase();
+    return {
+        ...loan,
+        currency: String(
+            loan.employee?.salaryCurrency || loan.employee?.currency || loan.currency || wsCurrency
+        ).toUpperCase(),
+    };
 }
 
 
@@ -1895,13 +1859,46 @@ export async function getAttendanceAdjustments(workspaceId, month) {
     const adjustments = [];
 
     for (const emp of employees) {
+        // Resolve employee joining date
+        let empJoiningIso = fromIso;
+        if (emp.joiningDate) {
+            empJoiningIso = new Date(emp.joiningDate).toISOString().slice(0, 10);
+        } else if (emp.createdAt) {
+            empJoiningIso = new Date(emp.createdAt).toISOString().slice(0, 10);
+        }
+
+        // Calculate individual tenure-based working days for this employee
+        let empWorkingDays = effectiveWorkingDays;
+        let isNewHireThisMonth = false;
+
+        if (empJoiningIso.startsWith(month)) {
+            const joinDay = parseInt(empJoiningIso.split("-")[2], 10);
+            isNewHireThisMonth = true;
+            if (isCurrentOngoingMonth) {
+                if (joinDay > elapsedDays) {
+                    empWorkingDays = 0;
+                } else {
+                    empWorkingDays = Math.max(1, elapsedDays - joinDay + 1);
+                }
+            } else {
+                if (joinDay > 1) {
+                    empWorkingDays = Math.max(1, monthBaseDays - joinDay);
+                } else {
+                    empWorkingDays = effectiveWorkingDays;
+                }
+            }
+        } else if (empJoiningIso > toIso) {
+            empWorkingDays = 0;
+            isNewHireThisMonth = true;
+        }
+
         // Calculate dynamic real-time attendance and leaves for this period
         const breakdown = await calculateEmployeeLeaveAndAbsenceBreakdown(
             workspace,
             emp._id,
             fromIso,
             toIso,
-            effectiveWorkingDays,
+            empWorkingDays,
             emp
         );
 
@@ -1911,38 +1908,60 @@ export async function getAttendanceAdjustments(workspaceId, month) {
         );
 
         const isManualOverride = Boolean(
-            batchEntry && batchEntry.isManualAdjustment && batchEntry.workingDays === effectiveWorkingDays
+            batchEntry && batchEntry.isManualAdjustment
         );
 
         let finalUnpaid = breakdown.unpaidDays;
         let finalPresent = breakdown.presentDays;
         let finalOt = 0;
 
+        // Check actual overtime hours from attendance punch records
+        const attRecords = await AttendanceRecord.find({
+            workspace: workspace._id,
+            employee: emp._id,
+            date: { $gte: fromIso, $lte: toIso },
+        }).select("date hoursWorked requiredHours").lean();
+
+        for (const att of attRecords) {
+            if (att.date && att.date < empJoiningIso) continue;
+            const reqH = att.requiredHours || 8;
+            if (att.hoursWorked && att.hoursWorked > reqH) {
+                finalOt += Math.round((att.hoursWorked - reqH) * 10) / 10;
+            }
+        }
+
         if (isManualOverride && batchEntry) {
             finalUnpaid = Number(batchEntry.unpaidDays) ?? breakdown.unpaidDays;
             finalPresent = Number(batchEntry.presentDays) ?? breakdown.presentDays;
-            finalOt = Number(batchEntry.overtimeHours) ?? 0;
+            finalOt = Number(batchEntry.overtimeHours) ?? finalOt;
+            if (batchEntry.workingDays) {
+                empWorkingDays = Number(batchEntry.workingDays);
+            }
         }
 
         const fullBasic = Number(emp.salaryAmount || emp.basicSalary || 75000);
-        const periodBasic = Math.round((fullBasic / monthBaseDays) * effectiveWorkingDays);
+        const periodBasic = Math.round((fullBasic / monthBaseDays) * empWorkingDays);
+        const empCurrency = emp.salaryCurrency || emp.currency || workspace.currency || "PKR";
 
         adjustments.push({
             id: emp._id.toString(),
             employeeId: emp.employeeId || "EMP-001",
             employeeName: `${emp.firstName || ""} ${emp.lastName || ""}`.trim() || emp.preferredName || "Staff Member",
+            employeeAvatar: emp.avatar || "",
             department: emp.department || "General",
             designation: emp.designation || "Employee",
             basicSalary: periodBasic,
-            workingDays: effectiveWorkingDays,
+            fullBasicSalary: fullBasic,
+            workingDays: empWorkingDays,
             presentDays: finalPresent,
             unpaidDays: finalUnpaid,
             overtimeHours: finalOt,
+            currency: empCurrency,
             isManualOverride,
             realTimeUnpaidDays: breakdown.unpaidDays,
             realTimePresentDays: breakdown.presentDays,
-            isNewHireThisMonth: breakdown.isNewHireThisMonth,
-            joiningDate: breakdown.joiningIso,
+            isNewHireThisMonth,
+            joiningDate: empJoiningIso,
             unexcusedAbsenceDays: breakdown.unexcusedAbsenceDays,
         });
     }

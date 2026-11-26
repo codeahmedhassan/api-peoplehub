@@ -8,12 +8,17 @@ import {
     getWorkspacesController,
     approveWorkspaceController,
     rejectWorkspaceController,
+    updateWorkspacePlanController,
+    sendPaymentFollowUpController,
+    revokeWorkspaceAccessController,
+    restoreWorkspaceAccessController,
     getAuditLogsController,
 } from "../../controllers/superAdmin/superAdmin.controller.js";
 import {
     superAdminListFeedbacksController,
     superAdminUpdateFeedbackController,
 } from "../../controllers/feedback/feedback.controller.js";
+import superAdminObservabilityRoutes from "./superAdminObservability.routes.js";
 import { requireSuperAdminAuth } from "../../middleware/superAdmin/superAdmin.middleware.js";
 import { superAdminLoginLimiter } from "../../middleware/rateLimit/rateLimit.middleware.js";
 
@@ -34,6 +39,10 @@ router.post("/auth/logout", requireSuperAdminAuth, logoutSuperAdminController);
 router.get("/workspaces", requireSuperAdminAuth, getWorkspacesController);
 router.post("/workspaces/:id/approve", requireSuperAdminAuth, approveWorkspaceController);
 router.post("/workspaces/:id/reject", requireSuperAdminAuth, rejectWorkspaceController);
+router.patch("/workspaces/:id/plan", requireSuperAdminAuth, updateWorkspacePlanController);
+router.post("/workspaces/:id/follow-up", requireSuperAdminAuth, sendPaymentFollowUpController);
+router.post("/workspaces/:id/revoke-access", requireSuperAdminAuth, revokeWorkspaceAccessController);
+router.post("/workspaces/:id/restore-access", requireSuperAdminAuth, restoreWorkspaceAccessController);
 
 // -------------------------------------------------------------------
 // Feedbacks, Reports & Suggestions Management
@@ -45,5 +54,10 @@ router.patch("/feedbacks/:id", requireSuperAdminAuth, superAdminUpdateFeedbackCo
 // Audit Logs
 // -------------------------------------------------------------------
 router.get("/audit-logs", requireSuperAdminAuth, getAuditLogsController);
+
+// -------------------------------------------------------------------
+// Proprietary Observability, APM, Error Tracking & AI Intelligence
+// -------------------------------------------------------------------
+router.use("/observability", superAdminObservabilityRoutes);
 
 export default router;

@@ -13,8 +13,10 @@ import { LeaveRequest } from "../../model/leave/leave.model.js";
 import { PerformanceAppraisal } from "../../model/performance/performanceAppraisal.model.js";
 import { ApiError } from "../../utils/ApiError.js";
 import { getDateInTimezone } from "../../utils/timezone.js";
+import { assertEmployeeQuota, assertStorageQuota, resolvePlanConfig } from "../workspace/plan.service.js";
+import { escapeRegex as escapeRegexSafe, sanitizeCsvCell } from "../../utils/security.js";
 import { encryptFile, decryptFile } from "../storage/document-crypto.service.js";
-import { uploadEncryptedBlob, deleteEncryptedBlob, getEncryptedBlob } from "../storage/s3.service.js";
+import { uploadEncryptedBlob, deleteEncryptedBlob, getEncryptedBlob, getEmployeeDocumentPath } from "../storage/s3.service.js";
 import { createInviteToken } from "../../utils/inviteToken.js";
 import {
     EMPLOYEE_ID_PREFIX,
@@ -329,11 +331,21 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
         );
     }
 
-    const [attendanceRecords, leaveRecords, performanceAppraisals] = await Promise.all([
-        AttendanceRecord.find({
-            workspace: workspace._id,
-            employee: employee._id,
-        })
+    let hireDateStr = null;
+    if (employee.joiningDate) {
+        hireDateStr = toIsoStringSafe(employee.joiningDate)?.slice(0, 10);
+    } else if (employee.createdAt) {
+        hireDateStr = toIsoStringSafe(employee.createdAt)?.slice(0, 10);
+    }
+
+    const attendanceFilter = {
+        workspace: workspace._id,
+        employee: employee._id,
+        ...(hireDateStr ? { date: { $gte: hireDateStr } } : {}),
+    };
+
+    const [rawAttendanceRecords, leaveRecords, performanceAppraisals] = await Promise.all([
+        AttendanceRecord.find(attendanceFilter)
             .sort({ date: -1 })
             .limit(60)
             .lean(),
@@ -350,6 +362,11 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
             .sort({ reviewDate: -1 })
             .lean(),
     ]);
+
+    // Filter strictly to records on or after employee's hire date
+    const attendanceRecords = rawAttendanceRecords.filter(
+        (r) => !hireDateStr || r.date >= hireDateStr
+    );
 
     // Attendance stats
     const empRequiredHours = Number(employee.workingHours) || 8;
@@ -535,9 +552,12 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
     const approvedLeaveIntervals = [];
     for (const lr of leaveRecords) {
         if (lr.status === "approved" && lr.startDate && lr.endDate) {
-            const startStr = toIsoStringSafe(lr.startDate)?.slice(0, 10);
-            const endStr = toIsoStringSafe(lr.endDate)?.slice(0, 10);
-            if (startStr && endStr) {
+            let startStr = toIsoStringSafe(lr.startDate)?.slice(0, 10);
+            let endStr = toIsoStringSafe(lr.endDate)?.slice(0, 10);
+            if (hireDateStr && startStr && startStr < hireDateStr) {
+                startStr = hireDateStr;
+            }
+            if (startStr && endStr && startStr <= endStr && (!hireDateStr || endStr >= hireDateStr)) {
                 approvedLeaveIntervals.push({
                     start: startStr,
                     end: endStr,
@@ -578,7 +598,7 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
         const stop = new Date(lr.end + "T00:00:00");
         while (curr <= stop) {
             const dateStr = curr.toISOString().slice(0, 10);
-            if (!attendanceRecordsMap.has(dateStr)) {
+            if ((!hireDateStr || dateStr >= hireDateStr) && !attendanceRecordsMap.has(dateStr)) {
                 attendanceRecordsMap.set(dateStr, {
                     id: `leave-${dateStr}`,
                     date: dateStr,
@@ -606,6 +626,23 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
     const ceoOverride = workspace.ceoFullControlWithHr !== undefined ? Boolean(workspace.ceoFullControlWithHr) : true;
     const canManage = isHR || (isCEO && (!hasHR || ceoOverride));
 
+    const { calculateEmployeePayroll, getComponents } = await import("../payroll/payroll.service.js");
+    let activeComps = [];
+    try {
+        activeComps = await getComponents(workspace._id);
+    } catch {}
+    const basePay = Number(safeEmployee.basicSalary || safeEmployee.salaryAmount || 0);
+    let computedGross = basePay;
+    let computedNet = basePay;
+    if (activeComps && activeComps.length > 0) {
+        try {
+            const payrollSim = calculateEmployeePayroll(activeComps, { basicSalary: basePay, employee: safeEmployee });
+            computedGross = payrollSim.grossSalary;
+            computedNet = payrollSim.netSalary;
+        } catch {}
+    }
+    const empCurrency = (employee.salaryCurrency || employee.currency || safeEmployee.salaryCurrency || safeEmployee.currency || workspace.currency || "USD").toUpperCase();
+
     return {
         ...safeEmployee,
         isSelf,
@@ -628,10 +665,10 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
         referenceRelation: isManagerUser ? null : safeEmployee.referenceRelation,
         referenceAddress: isManagerUser ? null : safeEmployee.referenceAddress,
 
-        salaryAmount: safeEmployee.salaryAmount,
-        basicSalary: safeEmployee.basicSalary || safeEmployee.salaryAmount,
-        grossSalary: safeEmployee.salaryAmount,
-        netSalary: safeEmployee.salaryAmount,
+        salaryAmount: basePay,
+        basicSalary: basePay,
+        grossSalary: computedGross,
+        netSalary: computedNet,
         salaryHistory: salaryHistory,
         bankAccountName: isManagerUser ? null : safeEmployee.bankAccountName,
         bankAccountNumber: isManagerUser ? null : safeEmployee.bankAccountNumber,
@@ -644,8 +681,8 @@ export async function getEmployeeDetailBundle(userId, idOrEmployeeId) {
         disciplinaryRecords: isManagerUser ? [] : (safeEmployee.disciplinaryRecords || []),
         vettingChecks: isManagerUser ? null : vettingChecksResult,
 
-        currency: workspace.currency || "USD",
-        salaryCurrency: workspace.currency || "USD",
+        currency: empCurrency,
+        salaryCurrency: empCurrency,
         attendanceRecords: mergedAttendanceRecords,
         attendanceStats,
         leaveRecords: leaveRecords.map((l) => ({
@@ -1077,6 +1114,12 @@ export async function createEmployee(userId, body, files = []) {
 
     await assertOperationalAuthority(userId, workspace, isCEO, isHR);
 
+    await assertEmployeeQuota(workspace._id);
+    if (Array.isArray(files) && files.length > 0) {
+        const totalIncomingBytes = files.reduce((acc, f) => acc + (f.size || f.buffer?.length || 0), 0);
+        await assertStorageQuota(workspace._id, totalIncomingBytes, files);
+    }
+
     // -------------------------------------------------------------------
     // Auto-generate employee ID
     // -------------------------------------------------------------------
@@ -1213,7 +1256,8 @@ export async function createEmployee(userId, body, files = []) {
         timeZone: body.timeZone || "",
 
         salaryAmount: Number(body.salaryAmount),
-        salaryCurrency: body.salaryCurrency,
+        salaryCurrency: (body.salaryCurrency || workspace.currency || "USD").trim().toUpperCase(),
+        currency: (body.salaryCurrency || workspace.currency || "USD").trim().toUpperCase(),
         payFrequency: body.payFrequency,
         bankAccountName: body.bankAccountName || "",
         bankAccountNumber: body.bankAccountNumber || "",
@@ -1267,7 +1311,8 @@ export async function createEmployee(userId, body, files = []) {
                         fileId: f.fileId,
                     });
 
-                const s3Key = `employees/${workspace._id}/${savedEmployee._id}/${f.fileId}.enc`;
+                // Canonical tree: employees/{employeeId}/documents/{filename}
+                const s3Key = getEmployeeDocumentPath(savedEmployee._id.toString(), `${f.fileId}.enc`);
                 await uploadEncryptedBlob(s3Key, ciphertext);
 
                 uploadedMeta.push({
@@ -1358,96 +1403,100 @@ export async function createEmployee(userId, body, files = []) {
 
     // -------------------------------------------------------------------
     // In-App & Email Notifications for New Employee & Reporting Managers
+    // (Restricted to Paid Pro Plan; on Basic/Free Plan, no in-app or email notifications are sent)
     // -------------------------------------------------------------------
-    try {
-        const { createNotification } = await import("../notification/notification.service.js");
-        const { sendNewEmployeeEmail, sendTeamAssignmentEmail } = await import("../email/email.service.js");
+    const isPaidPlan = resolvePlanConfig(workspace.subscription).isPaid;
+    if (isPaidPlan) {
+        try {
+            const { createNotification } = await import("../notification/notification.service.js");
+            const { sendNewEmployeeEmail, sendTeamAssignmentEmail } = await import("../email/email.service.js");
 
-        // 1. In-app notification for Workspace Admins
-        await createNotification({
-            workspaceId: workspace._id,
-            recipientId: null, // Broadcast to workspace admins
-            title: "New Employee Added",
-            message: `${savedEmployee.firstName} ${savedEmployee.lastName} joined as ${savedEmployee.designation || "Team Member"} in ${savedEmployee.department}.`,
-            type: "employee_added",
-            link: "/employees",
-            metadata: {
-                employeeId: savedEmployee._id,
-                employeeCode: savedEmployee.employeeId,
-                department: savedEmployee.department,
-            },
-        });
-
-        // Email to Workspace Owner/Admins if enabled
-        const ownerUser = await User.findById(workspace.owner);
-        if (ownerUser && ownerUser.email) {
-            const pref =
-                ownerUser.notificationPreferences?.["ceo-new-employee-hired"] ??
-                ownerUser.notificationPreferences?.["hr-new-employee-added"] ??
-                ownerUser.notificationPreferences?.["new-employee"] ??
-                true;
-            if (pref) {
-                sendNewEmployeeEmail({
-                    to: ownerUser.email,
-                    employee: savedEmployee,
-                    companyName: workspace.companyName,
-                }).catch(() => {});
-            }
-        }
-
-        // 2. If a reporting manager is assigned, find the manager and notify them!
-        if (savedEmployee.reportingManager) {
-            const managerQuery = savedEmployee.reportingManager.trim();
-            const managerEmp = await Employee.findOne({
-                workspace: workspace._id,
-                $or: [
-                    { employeeId: managerQuery },
-                    { firstName: managerQuery.split(" ")[0] },
-                ],
-            });
-
-            const managerUser = managerEmp?.linkedUser
-                ? await User.findById(managerEmp.linkedUser)
-                : await User.findOne({
-                    $or: [
-                        { fullName: new RegExp("^" + managerQuery + "$", "i") },
-                        { email: managerQuery.toLowerCase() },
-                    ],
-                });
-
-            // In-app notification for the Manager
+            // 1. In-app notification for Workspace Admins
             await createNotification({
                 workspaceId: workspace._id,
-                recipientId: managerUser?._id || (managerEmp ? managerEmp.linkedUser : null),
-                title: "New Team Member Assigned",
-                message: `${savedEmployee.firstName} ${savedEmployee.lastName} has been assigned to your team under ${savedEmployee.department}.`,
-                type: "team_assignment",
+                recipientId: null, // Broadcast to workspace admins
+                title: "New Employee Added",
+                message: `${savedEmployee.firstName} ${savedEmployee.lastName} joined as ${savedEmployee.designation || "Team Member"} in ${savedEmployee.department}.`,
+                type: "employee_added",
                 link: "/employees",
                 metadata: {
                     employeeId: savedEmployee._id,
-                    employeeName: `${savedEmployee.firstName} ${savedEmployee.lastName}`,
+                    employeeCode: savedEmployee.employeeId,
                     department: savedEmployee.department,
                 },
             });
 
-            const managerEmail = managerUser?.email || managerEmp?.loginEmail || managerEmp?.personalEmail;
-            if (managerEmail) {
-                const managerPref =
-                    managerUser?.notificationPreferences?.["mgr-new-employee-assigned"] ??
-                    managerUser?.notificationPreferences?.["manager-assignment"] ??
+            // Email to Workspace Owner/Admins if enabled
+            const ownerUser = await User.findById(workspace.owner);
+            if (ownerUser && ownerUser.email) {
+                const pref =
+                    ownerUser.notificationPreferences?.["ceo-new-employee-hired"] ??
+                    ownerUser.notificationPreferences?.["hr-new-employee-added"] ??
+                    ownerUser.notificationPreferences?.["new-employee"] ??
                     true;
-                if (managerPref) {
-                    sendTeamAssignmentEmail({
-                        to: managerEmail,
-                        managerName: managerUser?.fullName || managerEmp?.firstName || managerQuery,
+                if (pref) {
+                    sendNewEmployeeEmail({
+                        to: ownerUser.email,
                         employee: savedEmployee,
                         companyName: workspace.companyName,
                     }).catch(() => {});
                 }
             }
+
+            // 2. If a reporting manager is assigned, find the manager and notify them!
+            if (savedEmployee.reportingManager) {
+                const managerQuery = savedEmployee.reportingManager.trim();
+                const managerEmp = await Employee.findOne({
+                    workspace: workspace._id,
+                    $or: [
+                        { employeeId: managerQuery },
+                        { firstName: managerQuery.split(" ")[0] },
+                    ],
+                });
+
+                const managerUser = managerEmp?.linkedUser
+                    ? await User.findById(managerEmp.linkedUser)
+                    : await User.findOne({
+                        $or: [
+                            { fullName: new RegExp("^" + escapeRegexSafe(managerQuery) + "$", "i") },
+                            { email: managerQuery.toLowerCase() },
+                        ],
+                    });
+
+                // In-app notification for the Manager
+                await createNotification({
+                    workspaceId: workspace._id,
+                    recipientId: managerUser?._id || (managerEmp ? managerEmp.linkedUser : null),
+                    title: "New Team Member Assigned",
+                    message: `${savedEmployee.firstName} ${savedEmployee.lastName} has been assigned to your team under ${savedEmployee.department}.`,
+                    type: "team_assignment",
+                    link: "/employees",
+                    metadata: {
+                        employeeId: savedEmployee._id,
+                        employeeName: `${savedEmployee.firstName} ${savedEmployee.lastName}`,
+                        department: savedEmployee.department,
+                    },
+                });
+
+                const managerEmail = managerUser?.email || managerEmp?.loginEmail || managerEmp?.personalEmail;
+                if (managerEmail) {
+                    const managerPref =
+                        managerUser?.notificationPreferences?.["mgr-new-employee-assigned"] ??
+                        managerUser?.notificationPreferences?.["manager-assignment"] ??
+                        true;
+                    if (managerPref) {
+                        sendTeamAssignmentEmail({
+                            to: managerEmail,
+                            managerName: managerUser?.fullName || managerEmp?.firstName || managerQuery,
+                            employee: savedEmployee,
+                            companyName: workspace.companyName,
+                        }).catch(() => {});
+                    }
+                }
+            }
+        } catch (notifErr) {
+            console.error("Non-fatal notification error on employee creation:", notifErr.message);
         }
-    } catch (notifErr) {
-        console.error("Non-fatal notification error on employee creation:", notifErr.message);
     }
 
     return savedEmployee;
@@ -1576,6 +1625,12 @@ export async function listEmployees(userId) {
         .sort({ firstName: 1, lastName: 1 })
         .lean();
 
+    const { calculateEmployeePayroll, getComponents } = await import("../payroll/payroll.service.js");
+    let activeComps = [];
+    try {
+        activeComps = await getComponents(workspace._id);
+    } catch {}
+
     let mapped = employees.map((e) => {
         const { documents, ...rest } = e;
         const hasViewed = Array.isArray(e.viewedByManagers) && e.viewedByManagers.some(
@@ -1583,9 +1638,26 @@ export async function listEmployees(userId) {
         );
         const isNewForManager = isManager ? !hasViewed : false;
 
+        const basePay = Number(e.basicSalary || e.salaryAmount || 0);
+        let computedGross = basePay;
+        let computedNet = basePay;
+        if (activeComps && activeComps.length > 0) {
+            try {
+                const payrollSim = calculateEmployeePayroll(activeComps, { basicSalary: basePay, employee: e });
+                computedGross = payrollSim.grossSalary;
+                computedNet = payrollSim.netSalary;
+            } catch {}
+        }
+        const empCurrency = (e.salaryCurrency || e.currency || workspace.currency || "USD").toUpperCase();
+
         return {
             ...rest,
             id: e._id,
+            basicSalary: basePay,
+            grossSalary: computedGross,
+            netSalary: computedNet,
+            currency: empCurrency,
+            salaryCurrency: empCurrency,
             documentCount: documents?.length ?? 0,
             isNewForManager,
         };
@@ -1760,6 +1832,9 @@ export async function addDocumentsToEmployee(userId, idOrEmployeeId, files) {
         );
     }
 
+    const incomingBytes = files.reduce((acc, f) => acc + (f.size || f.buffer?.length || 0), 0);
+    await assertStorageQuota(workspace._id, incomingBytes, files);
+
     const uploadedMeta = [];
     try {
         for (const f of files) {
@@ -1769,7 +1844,8 @@ export async function addDocumentsToEmployee(userId, idOrEmployeeId, files) {
                     fileId: f.fileId,
                 });
 
-            const s3Key = `employees/${employee.workspace}/${employee._id}/${f.fileId}.enc`;
+            // Canonical tree: employees/{employeeId}/documents/{filename}
+            const s3Key = getEmployeeDocumentPath(employee._id.toString(), `${f.fileId}.enc`);
             await uploadEncryptedBlob(s3Key, ciphertext);
 
             uploadedMeta.push({
@@ -3262,6 +3338,9 @@ export async function bulkImportEmployees(userId, { fileBuffer, fileMime, fileNa
         throw ApiError.badRequest("No employee records found to import.");
     }
 
+    // Enforce plan-specific employee headcount ceiling across single and bulk imports
+    await assertEmployeeQuota(workspace._id, records.length);
+
     const createdEmployees = [];
     const errors = [];
 
@@ -3273,16 +3352,18 @@ export async function bulkImportEmployees(userId, { fileBuffer, fileMime, fileNa
             const rawLastName = row.lastName || row["Last Name"] || row["Last name"] || row.name?.split(" ").slice(1).join(" ") || "";
             const firstName = (rawFirstName ? String(rawFirstName) : `Staff_${rowNum}`).trim();
             const lastName = (rawLastName ? String(rawLastName) : "").trim();
-            const phone = String(row.phone || row["Phone"] || row["Phone Number"] || "000-000-0000").trim();
-            const personalEmail = String(row.personalEmail || row.email || row["Email"] || row["Personal Email"] || "").trim().toLowerCase();
+            const phone = String(row.phone || row["Phone"] || row["Phone Number"] || row.phoneNumber || "000-000-0000").trim();
+            const personalEmail = String(row.personalEmail || row.email || row["Email"] || row["Personal Email"] || row["Work Email"] || row.workEmail || "").trim().toLowerCase();
             const department = String(row.department || row["Department"] || "General").trim();
-            const designation = String(row.designation || row["Designation"] || row["Job Title"] || "Employee").trim();
+            const designation = String(row.designation || row["Designation"] || row["Job Title"] || row["Job title"] || row.title || "Employee").trim();
             const branch = String(row.branch || row["Branch"] || row.workLocation || row["Work Location"] || "Main Office").trim();
             const reportingManager = String(row.reportingManager || row["Reporting Manager"] || "").trim();
-            const systemRole = String(row.systemRole || row["Role"] || row["Role in Organization"] || "Employee").trim();
-            const salaryAmount = Number(row.salaryAmount || row.salary || row["Salary"] || row["Basic Salary"] || 50000);
+            const systemRole = String(row.systemRole || row["System Role"] || row["System role"] || row["Role"] || row["Role in Organization"] || "Employee").trim();
+            const salaryAmount = Number(row.salaryAmount || row.basicSalary || row["Basic Salary"] || row.salary || row["Salary"] || 50000);
+            const empCurrency = String(row.salaryCurrency || row.currency || row["Salary Currency"] || row["Currency"] || workspace.currency || "USD").trim().toUpperCase();
             const payFrequency = String(row.payFrequency || row["Pay Frequency"] || "Monthly").trim();
-            const nationalId = String(row.nationalId || row["National ID"] || row["CNIC"] || "").trim();
+            const rawNationalId = row.nationalId || row["National ID"] || row["CNIC"] || row["National Id"] || row.cnic || "";
+            const nationalId = String(rawNationalId === "HIDDEN" ? "" : rawNationalId).trim();
 
             let employeeId = String(row.employeeId || row["Employee ID"] || "").trim();
             if (employeeId) {
@@ -3294,6 +3375,9 @@ export async function bulkImportEmployees(userId, { fileBuffer, fileMime, fileNa
                 employeeId = await nextEmployeeId(workspace._id, { commit: true, department, branch });
             }
 
+            const rawJoiningDate = row.joiningDate || row["Joining Date"] || row["Joining date"];
+            const joiningDate = rawJoiningDate ? (parseDate(rawJoiningDate) || new Date()) : new Date();
+
             const emp = new Employee({
                 workspace: workspace._id,
                 employeeId,
@@ -3302,18 +3386,19 @@ export async function bulkImportEmployees(userId, { fileBuffer, fileMime, fileNa
                 phone,
                 preferredName: String(row.preferredName || "").trim(),
                 gender: String(row.gender || "").trim(),
-                employmentStatus: String(row.employmentStatus || row["Employment Status"] || "Active").trim(),
-                employmentType: String(row.employmentType || row["Employment Type"] || "Full Time").trim(),
+                employmentStatus: String(row.employmentStatus || row["Employment Status"] || row.status || row["Status"] || "Active").trim(),
+                employmentType: String(row.employmentType || row["Employment Type"] || row.type || row["Type"] || "Full Time").trim(),
                 designation,
                 department,
                 branch,
                 workLocation: branch,
                 reportingManager,
-                joiningDate: row.joiningDate ? (parseDate(row.joiningDate) || new Date()) : new Date(),
+                joiningDate,
                 personalEmail,
                 workingHours: Number(row.workingHours || row["Working Hours"] || 8),
                 salaryAmount: isNaN(salaryAmount) ? 50000 : salaryAmount,
-                salaryCurrency: row.salaryCurrency || workspace.currency || "USD",
+                salaryCurrency: empCurrency,
+                currency: empCurrency,
                 payFrequency: ["Monthly", "Semi-Monthly", "Bi-Weekly", "Weekly"].includes(payFrequency) ? payFrequency : "Monthly",
                 systemRole: ["Admin", "Manager", "HR", "Employee", "Viewer", "Custom"].includes(systemRole) ? systemRole : "Employee",
                 nationalId,
@@ -3332,6 +3417,125 @@ export async function bulkImportEmployees(userId, { fileBuffer, fileMime, fileNa
         totalProcessed: records.length,
         createdEmployees,
         errors,
+    };
+}
+
+/**
+ * Export employees to CSV, XLSX, or JSON.
+ */
+export async function exportEmployees(userId, { format = "csv", department, branch, status, q } = {}) {
+    const workspace = await getWorkspaceOrThrow(userId);
+    const { caller, callerEmployee, isCEO, isHR, isManager } = await getCallerRoleContext(userId, workspace);
+
+    const baseFilter = {
+        workspace: workspace._id,
+        isDeleted: { $ne: true },
+    };
+
+    if (isManager && !isCEO && !isHR) {
+        const teamFilter = buildManagerDirectReportsMongoFilter(workspace._id, caller, callerEmployee, { includeSelf: false });
+        Object.assign(baseFilter, teamFilter);
+    }
+
+    if (status) {
+        baseFilter.employmentStatus = status;
+    }
+    if (department) {
+        baseFilter.department = department;
+    }
+    if (branch) {
+        baseFilter.branch = branch;
+    }
+    if (q) {
+        const regex = new RegExp(escapeRegexSafe(q.trim()), "i");
+        baseFilter.$or = [
+            { firstName: regex },
+            { lastName: regex },
+            { employeeId: regex },
+            { loginEmail: regex },
+            { personalEmail: regex },
+        ];
+    }
+
+    const employees = await Employee.find(baseFilter).sort({ createdAt: -1 }).lean();
+    const isManagerUser = Boolean(isManager && !isCEO && !isHR);
+
+    const data = employees.map((emp) => {
+        const basic = Number(emp.salaryAmount) || 0;
+        const empCurrency = (emp.salaryCurrency || emp.currency || workspace.currency || "USD").toUpperCase();
+        const joiningDateStr = emp.joiningDate
+            ? (emp.joiningDate instanceof Date ? emp.joiningDate.toISOString().slice(0, 10) : String(emp.joiningDate).slice(0, 10))
+            : "";
+
+        return {
+            "Employee ID": emp.employeeId || "",
+            "First Name": emp.firstName || "",
+            "Last Name": emp.lastName || "",
+            "Email": emp.loginEmail || emp.personalEmail || "",
+            "Phone Number": emp.phone || "",
+            "Department": emp.department || "",
+            "Designation": emp.designation || "",
+            "Branch": emp.branch || emp.workLocation || "",
+            "Employment Status": emp.employmentStatus || "Active",
+            "Employment Type": emp.employmentType || "Full Time",
+            "Reporting Manager": emp.reportingManager || "",
+            "System Role": emp.systemRole || "Employee",
+            "Basic Salary": basic,
+            "Gross Salary": Number(emp.grossSalary ?? basic) || basic,
+            "Net Salary": Number(emp.netSalary ?? basic) || basic,
+            "Currency": empCurrency,
+            "Pay Frequency": emp.payFrequency || "Monthly",
+            "Joining Date": joiningDateStr,
+            "National ID": isManagerUser ? "HIDDEN" : (emp.nationalId || ""),
+        };
+    });
+
+    const fmt = String(format).toLowerCase();
+
+    if (fmt === "json") {
+        return {
+            buffer: Buffer.from(JSON.stringify(data, null, 2), "utf8"),
+            contentType: "application/json; charset=utf-8",
+            filename: `employees-export-${new Date().toISOString().slice(0, 10)}.json`,
+        };
+    }
+
+    const XLSX = (await import("xlsx")).default || (await import("xlsx"));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Employees");
+
+    if (fmt === "xlsx") {
+        const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        return {
+            buffer,
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename: `employees-export-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        };
+    }
+
+    // Default to CSV
+    const rawCsv = XLSX.utils.sheet_to_csv(ws);
+    // Neutralize formula injection triggers on exported cells when opened in Excel/Sheets
+    const csvString = rawCsv
+        .split(/\r?\n/)
+        .map((line) =>
+            line
+                .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+                .map((cell) => {
+                    const stripped = cell.startsWith('"') && cell.endsWith('"') ? cell.slice(1, -1).replace(/""/g, '"') : cell;
+                    const safe = String(sanitizeCsvCell(stripped));
+                    return safe.includes(",") || safe.includes('"') || safe.includes("\n")
+                        ? `"${safe.replace(/"/g, '""')}"`
+                        : safe;
+                })
+                .join(",")
+        )
+        .join("\n");
+    return {
+        buffer: Buffer.from(csvString, "utf8"),
+        contentType: "text/csv; charset=utf-8",
+        filename: `employees-export-${new Date().toISOString().slice(0, 10)}.csv`,
     };
 }
 

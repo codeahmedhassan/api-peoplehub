@@ -89,3 +89,37 @@ export const superAdminLoginLimiter = rateLimit({
         message: "Too many Super Admin authentication attempts. Access temporarily restricted.",
     },
 });
+
+export const authChallengeLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: "Too many verification or session requests. Please wait before trying again.",
+    },
+});
+
+export const devicePunchLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 180,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.headers["x-device-key"] || req.ip),
+    message: {
+        success: false,
+        message: "Too many attendance punch requests from this device.",
+    },
+});
+
+export const globalApiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 800,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: "Rate limit exceeded. Please slow down requests and try again shortly.",
+    },
+});

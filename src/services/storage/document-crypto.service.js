@@ -95,3 +95,124 @@ export function decryptFile(
     dek.fill(0);
     return plaintext;
 }
+
+/**
+ * Encrypt chat voice note with fresh DEK wrapped by KEK.
+ * Bound to conversationId and messageId via AAD.
+ */
+export function encryptVoiceBuffer(plaintextBuffer, { conversationId, messageId }) {
+    const kek = getKek();
+    const dek = crypto.randomBytes(DEK_LENGTH);
+
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, dek, iv);
+    const aad = Buffer.from(`chat:${conversationId}|msg:${messageId}`, "utf8");
+    cipher.setAAD(aad);
+
+    const ciphertext = Buffer.concat([cipher.update(plaintextBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    const wrappedDek = wrapDek(dek, kek);
+    dek.fill(0);
+
+    return {
+        ciphertext,
+        iv: iv.toString("base64"),
+        authTag: authTag.toString("base64"),
+        wrappedDek,
+        kekVersion: 1,
+    };
+}
+
+/**
+ * Decrypt chat voice note ciphertext.
+ */
+export function decryptVoiceBuffer(ciphertextBuffer, { iv, authTag, wrappedDek, conversationId, messageId }) {
+    const kek = getKek();
+    const dek = unwrapDek(wrappedDek, kek);
+
+    const ivBuf = Buffer.from(iv, "base64");
+    const tagBuf = Buffer.from(authTag, "base64");
+    const decipher = crypto.createDecipheriv(ALGORITHM, dek, ivBuf);
+    decipher.setAAD(Buffer.from(`chat:${conversationId}|msg:${messageId}`, "utf8"));
+    decipher.setAuthTag(tagBuf);
+
+    const plaintext = Buffer.concat([
+        decipher.update(ciphertextBuffer),
+        decipher.final(),
+    ]);
+    dek.fill(0);
+    return plaintext;
+}
+
+/**
+ * Generate ephemeral client-side encryption params for S3 presigned direct upload.
+ * Client encrypts in-browser with WebCrypto AES-GCM before PUTting to S3.
+ */
+export function createVoiceEncryptionParams({ conversationId, messageId }) {
+    const kek = getKek();
+    const dek = crypto.randomBytes(DEK_LENGTH);
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const wrappedDek = wrapDek(dek, kek);
+    const aad = Buffer.from(`chat:${conversationId}|msg:${messageId}`, "utf8");
+
+    const dekRaw = dek.toString("base64");
+    dek.fill(0);
+
+    return {
+        dekBase64: dekRaw,
+        ivBase64: iv.toString("base64"),
+        aadBase64: aad.toString("base64"),
+        wrappedDek,
+        kekVersion: 1,
+    };
+}
+
+/**
+ * Encrypt chat attachment with fresh DEK wrapped by KEK.
+ * Bound to conversationId and fileId via AAD.
+ */
+export function encryptAttachmentBuffer(plaintextBuffer, { conversationId, fileId }) {
+    const kek = getKek();
+    const dek = crypto.randomBytes(DEK_LENGTH);
+
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, dek, iv);
+    const aad = Buffer.from(`chat:${conversationId}|file:${fileId}`, "utf8");
+    cipher.setAAD(aad);
+
+    const ciphertext = Buffer.concat([cipher.update(plaintextBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    const wrappedDek = wrapDek(dek, kek);
+    dek.fill(0);
+
+    return {
+        ciphertext,
+        iv: iv.toString("base64"),
+        authTag: authTag.toString("base64"),
+        wrappedDek,
+        kekVersion: 1,
+    };
+}
+
+/**
+ * Decrypt chat attachment ciphertext.
+ */
+export function decryptAttachmentBuffer(ciphertextBuffer, { iv, authTag, wrappedDek, conversationId, fileId }) {
+    const kek = getKek();
+    const dek = unwrapDek(wrappedDek, kek);
+
+    const ivBuf = Buffer.from(iv, "base64");
+    const tagBuf = Buffer.from(authTag, "base64");
+    const decipher = crypto.createDecipheriv(ALGORITHM, dek, ivBuf);
+    decipher.setAAD(Buffer.from(`chat:${conversationId}|file:${fileId}`, "utf8"));
+    decipher.setAuthTag(tagBuf);
+
+    const plaintext = Buffer.concat([
+        decipher.update(ciphertextBuffer),
+        decipher.final(),
+    ]);
+    dek.fill(0);
+    return plaintext;
+}

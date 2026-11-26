@@ -22,6 +22,7 @@ import {
     requestEmployeeDeletionController,
     requestAttendanceUpdateController,
     bulkImportEmployeesController,
+    exportEmployeesController,
     getWorkspaceManagersController,
     replaceManagerController,
     bulkAssignManagerController,
@@ -130,6 +131,7 @@ router.get("/", requireAuth, requirePermission("employees", "view"), listEmploye
 // doesn't treat them as an employee ID.
 router.get("/next-id", requireAuth, getNextEmployeeIdController);
 router.get("/managers", requireAuth, getWorkspaceManagersController);
+router.get("/export", requireAuth, requirePermission("employees", "view"), exportEmployeesController);
 router.post("/managers/replace", requireAuth, replaceManagerController);
 router.post("/managers/assign", requireAuth, bulkAssignManagerController);
 router.post("/bulk-import", requireAuth, uploadBulkImportFile, bulkImportEmployeesController);

@@ -11,6 +11,10 @@ import performanceRoutes from "./performance/performance.routes.js";
 import superAdminRoutes from "./superAdmin/superAdmin.routes.js";
 import feedbackRoutes from "./feedback/feedback.routes.js";
 import auditLogRoutes from "./audit/auditLog.routes.js";
+import chatRoutes from "./chat/chat.routes.js";
+import analyticsRoutes from "./analytics/analytics.routes.js";
+import workspaceAnalyticsRoutes from "./workspace/workspaceAnalytics.routes.js";
+import publicRoutes from "./public/public.routes.js";
 
 const router = Router();
 
@@ -30,5 +34,9 @@ router.use("/performance", performanceRoutes);
 router.use("/super-admin", superAdminRoutes);
 router.use("/feedback", feedbackRoutes);
 router.use("/audit-logs", auditLogRoutes);
+router.use("/chat", chatRoutes);
+router.use("/analytics", analyticsRoutes);
+router.use("/workspace/analytics", workspaceAnalyticsRoutes);
+router.use("/public", publicRoutes);
 
 export default router;

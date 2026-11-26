@@ -42,7 +42,7 @@ export async function verifyMailer() {
     }
 }
 
-export async function sendMail({ to, subject, html, text }) {
+export async function sendMail({ to, subject, html, text, replyTo }) {
     const mailer = getMailer();
     const info = await mailer.sendMail({
         from: env.smtp.from,
@@ -50,6 +50,7 @@ export async function sendMail({ to, subject, html, text }) {
         subject,
         html,
         text,
+        ...(replyTo ? { replyTo } : {}),
     });
 
     const preview = nodemailer.getTestMessageUrl(info);

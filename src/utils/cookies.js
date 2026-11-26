@@ -7,13 +7,17 @@ const REFRESH_REMEMBER_ME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SIGNUP_PENDING_MAX_AGE_MS = 30 * 60 * 1000;
 
 function baseCookieOptions(maxAge) {
+    const cookieDomain =
+        env.isProd && env.cookie.domain && env.cookie.domain !== "localhost"
+            ? env.cookie.domain
+            : undefined;
     return {
         httpOnly: true,
-        secure: env.cookie.secure,
+        secure: env.isProd ? env.cookie.secure : false,
         sameSite: env.cookie.sameSite,
         path: "/",
         maxAge, // when undefined → session cookie (dies on browser close)
-        domain: env.isProd ? env.cookie.domain : undefined,
+        domain: cookieDomain,
     };
 }
 

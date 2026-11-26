@@ -1,5 +1,9 @@
+import mongoose from "mongoose";
+import { Workspace } from "../../model/workspace/workspace.model.js";
 import { sendMail } from "../../config/mailer.js";
 import { env } from "../../config/env.js";
+import { resolvePlanConfig } from "../workspace/plan.service.js";
+import { escapeRegex } from "../../utils/security.js";
 
 export async function sendVerificationEmail(user, token) {
     const url = `${env.cors.marketingUrl}/verify-email/confirm?token=${encodeURIComponent(
@@ -106,6 +110,61 @@ export async function sendEmployeeInviteEmail(user, token) {
     });
 }
 
+export async function sendPasswordResetEmail(user, token) {
+    const url = `${env.cors.marketingUrl}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`;
+
+    const html = `
+    <!DOCTYPE html>
+    <html>
+      <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="560" cellpadding="0" cellspacing="0"
+                style="background:#ffffff;border-radius:16px;padding:40px;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
+                <tr>
+                  <td>
+                    <h1 style="margin:0 0 12px;font-size:22px;color:#0f172a;">Reset your password</h1>
+                    <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.6;">
+                      Hi ${escapeHtml(user.fullName || "there")}, we received a request to reset the password for your CorpiLance account.
+                      Click the button below to choose a new password.
+                    </p>
+                    <p style="margin:0 0 28px;">
+                      <a href="${url}"
+                        style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;
+                               padding:12px 24px;border-radius:9999px;font-weight:600;font-size:14px;">
+                        Reset password
+                      </a>
+                    </p>
+                    <p style="margin:0 0 8px;font-size:12px;color:#64748b;">
+                      This link expires in 1 hour and can only be used once. If the button doesn't work, paste this link into your browser:
+                    </p>
+                    <p style="margin:0 0 24px;font-size:12px;color:#2563eb;word-break:break-all;">
+                      ${url}
+                    </p>
+                    <p style="margin:0;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:16px;">
+                      If you did not request a password reset, you can safely ignore this email.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    `;
+
+    const text = `Reset your CorpiLance password: ${url}\n\nThis link expires in 1 hour.`;
+
+    await sendMail({
+        to: user.email,
+        subject: "Reset your CorpiLance password",
+        html,
+        text,
+    });
+}
+
 function escapeHtml(str = "") {
     return String(str)
         .replace(/&/g, "&amp;")
@@ -117,6 +176,9 @@ function escapeHtml(str = "") {
 
 
 export async function sendNewEmployeeEmail({ to, employee, companyName }) {
+    if (!(await checkWorkspacePaidPlan(employee?.workspace || companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const fullName = `${employee.firstName} ${employee.lastName}`.trim();
     const html = `
     <!DOCTYPE html>
@@ -184,7 +246,30 @@ export async function sendNewEmployeeEmail({ to, employee, companyName }) {
     }).catch((err) => console.error("Failed to send new employee email:", err.message));
 }
 
+/**
+ * Restricts advanced automated operational emails to Paid subscriptions.
+ */
+async function checkWorkspacePaidPlan(workspaceIdOrCompany) {
+    if (!workspaceIdOrCompany) return false;
+    try {
+        let ws = null;
+        if (typeof workspaceIdOrCompany === "string" && mongoose.isValidObjectId(workspaceIdOrCompany)) {
+            ws = await Workspace.findById(workspaceIdOrCompany).select("subscription").lean();
+        } else if (workspaceIdOrCompany instanceof mongoose.Types.ObjectId) {
+            ws = await Workspace.findById(workspaceIdOrCompany).select("subscription").lean();
+        } else if (typeof workspaceIdOrCompany === "string") {
+            ws = await Workspace.findOne({ companyName: new RegExp(`^${escapeRegex(workspaceIdOrCompany.trim())}$`, "i") }).select("subscription").lean();
+        }
+        return resolvePlanConfig(ws?.subscription).features.advancedEmails;
+    } catch {
+        return false;
+    }
+}
+
 export async function sendTeamAssignmentEmail({ to, managerName, employee, companyName }) {
+    if (!(await checkWorkspacePaidPlan(employee?.workspace || companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const fullName = `${employee.firstName} ${employee.lastName}`.trim();
     const html = `
     <!DOCTYPE html>
@@ -248,6 +333,9 @@ export async function sendTeamAssignmentEmail({ to, managerName, employee, compa
 }
 
 export async function sendRoleUpdateEmail({ to, userName, newRole, department, companyName }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const html = `
     <!DOCTYPE html>
     <html>
@@ -295,6 +383,9 @@ export async function sendRoleUpdateEmail({ to, userName, newRole, department, c
 }
 
 export async function sendPayrollReminderEmail({ to, userName, companyName, period, disbursementDate }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const html = `
     <!DOCTYPE html>
     <html>
@@ -386,6 +477,9 @@ export async function send2FACodeEmail({ to, userName, code }) {
 }
 
 export async function sendWeekendScheduleUpdateEmail({ to, managerName, weekendDays, companyName }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const weekendList = Array.isArray(weekendDays) ? weekendDays.join(", ") : String(weekendDays);
     const html = `
     <!DOCTYPE html>
@@ -445,6 +539,9 @@ export async function sendWeekendScheduleUpdateEmail({ to, managerName, weekendD
 }
 
 export async function sendHolidayAnnouncementEmail({ to, managerName, holidays, companyName }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const holidaysRows = (holidays || [])
         .map(
             (h) => `
@@ -516,6 +613,9 @@ export async function sendHolidayAnnouncementEmail({ to, managerName, holidays, 
 }
 
 export async function sendHolidayCancellationEmail({ to, managerName, canceledHolidays, companyName }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const holidaysRows = (canceledHolidays || [])
         .map(
             (h) => `
@@ -596,6 +696,9 @@ export async function sendTeamLeaveUpdateEmail({
     reviewerRole = "HR",
     companyName = "CorpiLance",
 }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const isApproved = String(status).toLowerCase().includes("approve");
     const statusColor = isApproved ? "#059669" : "#dc2626";
     const statusBg = isApproved ? "#ecfdf5" : "#fef2f2";
@@ -677,6 +780,9 @@ export async function sendEmployeeLeaveStatusEmail({
     reviewerRole = "HR",
     companyName = "CorpiLance",
 }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const isApproved = String(status).toLowerCase().includes("approve");
     const statusColor = isApproved ? "#059669" : "#dc2626";
     const statusBg = isApproved ? "#ecfdf5" : "#fef2f2";
@@ -768,6 +874,9 @@ export async function sendNewLeaveRequestEmail({
     reason,
     companyName = "CorpiLance",
 }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
     const html = `
     <!DOCTYPE html>
     <html>
@@ -854,7 +963,18 @@ export async function sendPayslipEmail({
     paymentMethod = "Bank Transfer",
     bankName = "Not Configured",
     accountNumber = "Not Configured",
+    payslipSettings = {},
 }) {
+    if (!(await checkWorkspacePaidPlan(companyName))) {
+        return { skipped: true, reason: "PLAN_UPGRADE_REQUIRED" };
+    }
+    const showEarnings = payslipSettings.showEarnings !== false;
+    const showDeductions = payslipSettings.showDeductions !== false;
+    const showBankDetails = payslipSettings.showBankDetails !== false;
+    const showFooter = payslipSettings.showFooter !== false;
+    const showEmployeeId = payslipSettings.showEmployeeId !== false;
+    const showDepartment = payslipSettings.showDepartment !== false;
+    const showDesignation = payslipSettings.showDesignation !== false;
     const earningsRows = (earnings || [])
         .map(
             (e) => `
@@ -903,6 +1023,9 @@ export async function sendPayslipEmail({
                           <div style="font-size:13px;font-weight:700;color:#0f172a;margin-top:4px;">
                             Period: ${escapeHtml(period)}
                           </div>
+                          <div style="font-size:11px;font-weight:600;color:#64748b;margin-top:2px;">
+                            Salary Currency: ${escapeHtml(currency)}
+                          </div>
                         </td>
                       </tr>
                     </table>
@@ -912,21 +1035,21 @@ export async function sendPayslipEmail({
                       Hi <strong>${escapeHtml(userName)}</strong>,
                     </p>
                     <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.6;">
-                      Here is your official salary pay advisory for the period of <strong>${escapeHtml(period)}</strong>.
+                      Here is your official salary pay advisory for the period of <strong>${escapeHtml(period)}</strong> (${escapeHtml(currency)}).
                     </p>
 
                     <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:24px;border:1px solid #e2e8f0;">
                       <tr>
                         <td width="50%" style="padding:4px 0;font-size:12px;color:#64748b;">
-                          Employee ID: <strong style="color:#0f172a;">${escapeHtml(employeeId || "—")}</strong>
+                          ${showEmployeeId ? `Employee ID: <strong style="color:#0f172a;">${escapeHtml(employeeId || "—")}</strong>` : ""}
                         </td>
                         <td width="50%" style="padding:4px 0;font-size:12px;color:#64748b;">
-                          Department: <strong style="color:#0f172a;">${escapeHtml(department || "General")}</strong>
+                          ${showDepartment ? `Department: <strong style="color:#0f172a;">${escapeHtml(department || "General")}</strong>` : ""}
                         </td>
                       </tr>
                       <tr>
                         <td width="50%" style="padding:4px 0;font-size:12px;color:#64748b;">
-                          Designation: <strong style="color:#0f172a;">${escapeHtml(designation || "Staff Member")}</strong>
+                          ${showDesignation ? `Designation: <strong style="color:#0f172a;">${escapeHtml(designation || "Staff Member")}</strong>` : ""}
                         </td>
                         <td width="50%" style="padding:4px 0;font-size:12px;color:#64748b;">
                           Attendance: <strong style="color:#0f172a;">${presentDays} / ${workingDays} Days</strong>
@@ -944,22 +1067,22 @@ export async function sendPayslipEmail({
                     </table>
 
                     <!-- Breakdown: Earnings & Deductions -->
-                    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                    ${(showEarnings || showDeductions) ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
                       <tr>
-                        <td width="48%" valign="top" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
+                        ${showEarnings ? `<td width="${showDeductions ? "48%" : "100%"}" valign="top" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
                           <div style="font-size:12px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid #e2e8f0;padding-bottom:8px;margin-bottom:12px;">
                             Earnings
                           </div>
                           <table width="100%" cellpadding="0" cellspacing="0">
-                            ${earningsRows || `<tr><td style="font-size:13px;color:#475569;">Base Salary</td><td style="font-size:13px;color:#0f172a;font-weight:600;text-align:right;">${currency} ${basicSalary.toLocaleString()}</td></tr>`}
+                            ${earningsRows || `<tr><td style="font-size:13px;color:#475569;">Base Salary</td><td style="font-size:13px;color:#0f172a;font-weight:600;text-align:right;">${escapeHtml(currency)} ${basicSalary.toLocaleString()}</td></tr>`}
                             <tr style="border-top:1px solid #e2e8f0;">
                               <td style="padding:10px 0 0;font-size:13px;font-weight:700;color:#0f172a;">Total Gross</td>
                               <td style="padding:10px 0 0;font-size:13px;font-weight:700;color:#047857;text-align:right;">${escapeHtml(currency)} ${grossSalary.toLocaleString()}</td>
                             </tr>
                           </table>
-                        </td>
-                        <td width="4%"></td>
-                        <td width="48%" valign="top" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
+                        </td>` : ""}
+                        ${(showEarnings && showDeductions) ? `<td width="4%"></td>` : ""}
+                        ${showDeductions ? `<td width="${showEarnings ? "48%" : "100%"}" valign="top" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
                           <div style="font-size:12px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid #e2e8f0;padding-bottom:8px;margin-bottom:12px;">
                             Deductions
                           </div>
@@ -970,9 +1093,9 @@ export async function sendPayslipEmail({
                               <td style="padding:10px 0 0;font-size:13px;font-weight:700;color:#e11d48;text-align:right;">-${escapeHtml(currency)} ${totalDeductions.toLocaleString()}</td>
                             </tr>
                           </table>
-                        </td>
+                        </td>` : ""}
                       </tr>
-                    </table>
+                    </table>` : ""}
 
                     <!-- Net Payable Banner -->
                     <div style="background:#eff6ff;border:2px solid #bfdbfe;border-radius:14px;padding:20px;margin-bottom:24px;">
@@ -982,16 +1105,16 @@ export async function sendPayslipEmail({
                       <div style="font-size:26px;font-weight:800;color:#1e3a8a;margin-top:4px;">
                         ${escapeHtml(currency)} ${netSalary.toLocaleString()}
                       </div>
-                      <div style="font-size:12px;color:#475569;margin-top:8px;">
+                      ${showBankDetails ? `<div style="font-size:12px;color:#475569;margin-top:8px;">
                         Disbursement Method: <strong>${escapeHtml(paymentMethod)}</strong>
                         ${bankName && bankName !== "Not Configured" ? ` &bull; ${escapeHtml(bankName)} (${escapeHtml(accountNumber)})` : ""}
-                      </div>
+                      </div>` : ""}
                     </div>
 
                     <!-- Footer -->
-                    <p style="margin:0;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:16px;text-align:center;">
-                      This is an electronically generated salary payslip issued by ${escapeHtml(companyName)}. No physical signature required.
-                    </p>
+                    ${showFooter ? `<p style="margin:0;font-size:12px;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:16px;text-align:center;">
+                      ${escapeHtml(payslipSettings.footerText || payslipSettings.footerNote || `This is an electronically generated salary payslip issued by ${companyName}. No physical signature required.`)}
+                    </p>` : ""}
                   </td>
                 </tr>
               </table>
