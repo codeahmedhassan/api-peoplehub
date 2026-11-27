@@ -989,7 +989,7 @@ export async function transferCeoAndExit(callerUserId, targetEmployeeId) {
     }
 
     if (!targetUser) {
-        const email = (targetEmployee.workEmail || targetEmployee.loginEmail || targetEmployee.personalEmail || `ceo.${targetEmployee.employeeId.toLowerCase()}@corpilance.com`).toLowerCase().trim();
+        const email = (targetEmployee.workEmail || targetEmployee.loginEmail || targetEmployee.personalEmail || `ceo.${targetEmployee.employeeId.toLowerCase()}@corpilance.tech`).toLowerCase().trim();
         const { hashPassword } = await import("../../utils/password.js");
         const defaultPass = await hashPassword("CeoSuccession2026!");
         targetUser = await User.create({

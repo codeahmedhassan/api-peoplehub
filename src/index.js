@@ -16,8 +16,8 @@ import { syncAllWorkspacesStorage } from "./services/workspace/plan.service.js";
 import { globalApiLimiter } from "./middleware/rateLimit/rateLimit.middleware.js";
 import { sanitizeObjectInPlace } from "./utils/security.js";
 
-// Enable Mongoose filter sanitization globally against query selector injection
-mongoose.set("sanitizeFilter", true);
+// Note: Express input sanitization (sanitizeObjectInPlace) already strips incoming `$` operators
+// from req.body/query/params at the HTTP boundary without breaking trusted server `$in`/`$ne`/`$gte` queries.
 
 const app = express();
 

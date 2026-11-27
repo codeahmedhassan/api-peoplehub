@@ -459,7 +459,7 @@ export async function getSuperAdminWorkspaces({ status, search, page = 1, limit 
             .lean(),
         Workspace.countDocuments(filter),
         Workspace.countDocuments({ verificationStatus: "pending" }),
-        Workspace.countDocuments({ verificationStatus: { $in: ["approved", null, undefined] } }),
+        Workspace.countDocuments({ verificationStatus: { $in: ["approved", null] } }),
         Workspace.countDocuments({ verificationStatus: "rejected" }),
     ]);
 
@@ -614,7 +614,7 @@ export async function rejectWorkspace({ workspaceId, reason, superAdminId, req }
                             </p>
                         </div>
                         <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 20px 0 0 0;">
-                            If you believe this was an error or would like to provide updated documentation to appeal, please contact our support team at <a href="mailto:support@corpilance.com" style="color: #2563eb; text-decoration: underline;">support@corpilance.com</a>.
+                            If you believe this was an error or would like to provide updated documentation to appeal, please contact our support team at <a href="mailto:corpilance.org@gmail.com" style="color: #2563eb; text-decoration: underline;">corpilance.org@gmail.com</a>.
                         </p>
                     </div>
                 `,
