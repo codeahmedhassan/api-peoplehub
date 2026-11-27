@@ -6,6 +6,7 @@ import { EmployeeCounter } from "../../model/employee/counter.model.js";
 import { EmployeeActivity } from "../../model/employee/activity.model.js";
 import { EmployeeCorrectionRequest } from "../../model/employee/correctionRequest.model.js";
 import { getWorkspaceOrThrow } from "../workspace/workspace.service.js";
+import { getOrSetRequestCache } from "../../utils/requestContext.js";
 import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { AttendanceRecord } from "../../model/attendance/attendance.model.js";
@@ -1520,13 +1521,19 @@ export async function createEmployee(userId, body, files = []) {
 }
 
 export async function getCallerRoleContext(userId, workspace) {
-    const caller = await User.findById(userId).lean();
+    const caller = await getOrSetRequestCache(`auth_user_lean:${userId}`, () =>
+        User.findById(userId)
+            .select("-activeSessions -notificationPreferences -legalAcceptance")
+            .lean()
+    );
     if (!caller) throw ApiError.unauthorized("User no longer exists");
 
-    const callerEmployee = await Employee.findOne({
-        workspace: workspace._id,
-        $or: [{ linkedUser: userId }, { loginEmail: caller.email }]
-    }).lean();
+    const callerEmployee = await getOrSetRequestCache(`caller_emp_lean:${workspace._id}:${userId}`, () =>
+        Employee.findOne({
+            workspace: workspace._id,
+            $or: [{ linkedUser: userId }, { loginEmail: caller.email }],
+        }).select("-documents -salaryHistory -disciplinaryRecords -education -experience -certificates -vettingChecks -confidentialNotes -bankAccountNumber -taxIdentifier").lean()
+    );
 
     let isOwner = false;
     if (workspace.owner) {
@@ -1639,6 +1646,7 @@ export async function listEmployees(userId) {
     }
 
     const employees = await Employee.find(filter)
+        .select("-confidentialNotes -salaryHistory -disciplinaryRecords -vettingChecks -bankAccountNumber -taxIdentifier")
         .sort({ firstName: 1, lastName: 1 })
         .lean();
 

@@ -6,6 +6,7 @@ import { COOKIE_NAMES } from "../../constants/index.js";
 import { User } from "../../model/auth/auth.model.js";
 import { refreshSession, assertUserWorkspaceNotRevoked } from "../../services/auth/auth.service.js";
 import { setAuthCookies, clearAuthCookies } from "../../utils/cookies.js";
+import { getOrSetRequestCache } from "../../utils/requestContext.js";
 
 export async function requireAuth(req, res, next) {
     const token = req.cookies?.[COOKIE_NAMES.ACCESS_TOKEN];
@@ -151,7 +152,11 @@ export function requireAnyPermission(checks = []) {
                 return next(ApiError.unauthorized("Not authenticated"));
             }
 
-            const user = await User.findById(req.userId).lean();
+            const user = await getOrSetRequestCache(`auth_user_lean:${req.userId}`, () =>
+                User.findById(req.userId)
+                    .select("-activeSessions -notificationPreferences -legalAcceptance")
+                    .lean()
+            );
             if (!user) {
                 return next(ApiError.unauthorized("User no longer exists"));
             }
@@ -179,14 +184,16 @@ export function requireAnyPermission(checks = []) {
             const { Employee } = await import("../../model/employee/employee.model.js");
             let emp = null;
             if (workspace) {
-                emp = await Employee.findOne({
-                    workspace: workspace._id,
-                    $or: [
-                        { linkedUser: user._id },
-                        { loginEmail: user.email?.toLowerCase() },
-                        { personalEmail: user.email?.toLowerCase() },
-                    ],
-                }).select("permissions systemRole designation department").lean();
+                emp = await getOrSetRequestCache(`auth_emp_lean:${workspace._id}:${req.userId}`, () =>
+                    Employee.findOne({
+                        workspace: workspace._id,
+                        $or: [
+                            { linkedUser: user._id },
+                            { loginEmail: user.email?.toLowerCase() },
+                            { personalEmail: user.email?.toLowerCase() },
+                        ],
+                    }).select("permissions systemRole designation department").lean()
+                );
             }
 
             const permissions = (emp?.permissions && Object.keys(emp.permissions).length > 0) ? emp.permissions : (user.permissions || {});

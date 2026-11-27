@@ -3,6 +3,7 @@ import { Workspace } from "../../model/workspace/workspace.model.js";
 import { User } from "../../model/auth/auth.model.js";
 import { Employee } from "../../model/employee/employee.model.js";
 import { ApiError } from "../../utils/ApiError.js";
+import { getOrSetRequestCache } from "../../utils/requestContext.js";
 import { calculateWorkspaceStorageBytes } from "./plan.service.js";
 
 export async function setupWorkspace(userId, payload) {
@@ -43,31 +44,35 @@ export async function setupWorkspace(userId, payload) {
 
 
 export async function getWorkspaceForUser(userId) {
-    const user = await User.findById(userId);
-    if (!user) return null;
+    if (!userId) return null;
+    const key = `workspace_for_user:${userId.toString()}`;
+    return getOrSetRequestCache(key, async () => {
+        const user = await User.findById(userId).select("workspaceId email").lean();
+        if (!user) return null;
 
-    // 1. Check if they own a workspace
-    const ownedWorkspace = await Workspace.findOne({ owner: userId });
-    if (ownedWorkspace) return ownedWorkspace;
+        // 1. Check if they own a workspace
+        const ownedWorkspace = await Workspace.findOne({ owner: userId });
+        if (ownedWorkspace) return ownedWorkspace;
 
-    // 2. Check if they are an employee linked to a workspace
-    if (user.workspaceId) {
-        return await Workspace.findById(user.workspaceId);
-    }
+        // 2. Check if they are an employee linked to a workspace
+        if (user.workspaceId) {
+            return await Workspace.findById(user.workspaceId);
+        }
 
-    // 3. Check if user is a member of any workspace
-    const memberWorkspace = await Workspace.findOne({ "members.user": userId });
-    if (memberWorkspace) return memberWorkspace;
+        // 3. Check if user is a member of any workspace
+        const memberWorkspace = await Workspace.findOne({ "members.user": userId });
+        if (memberWorkspace) return memberWorkspace;
 
-    // 4. Check if employee record belongs to a workspace
-    const linkedEmp = await Employee.findOne({
-        $or: [{ linkedUser: userId }, { loginEmail: user.email?.toLowerCase() }]
+        // 4. Check if employee record belongs to a workspace
+        const linkedEmp = await Employee.findOne({
+            $or: [{ linkedUser: userId }, { loginEmail: user.email?.toLowerCase() }],
+        }).select("workspace").lean();
+        if (linkedEmp?.workspace) {
+            return await Workspace.findById(linkedEmp.workspace);
+        }
+
+        return null;
     });
-    if (linkedEmp?.workspace) {
-        return await Workspace.findById(linkedEmp.workspace);
-    }
-
-    return null;
 }
 
 async function assertWorkspaceAdminAuthority(userId, workspace, { requireCeo = false } = {}) {

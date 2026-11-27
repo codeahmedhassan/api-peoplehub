@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { apmService } from "../../services/observability/apm.service.js";
 import { logger } from "../../services/observability/structuredLogger.service.js";
+import { runWithRequestContext } from "../../utils/requestContext.js";
 
 /**
  * Normalizes route path by replacing Mongo ObjectIDs, UUIDs, and numeric IDs with placeholders.
@@ -60,5 +61,5 @@ export function requestTraceMiddleware(req, res, next) {
         }
     });
 
-    next();
+    runWithRequestContext(() => next());
 }

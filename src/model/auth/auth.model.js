@@ -157,6 +157,7 @@ const userSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "Workspace",
             default: null,
+            index: true,
         },
         permissions: {
             type: Schema.Types.Mixed,

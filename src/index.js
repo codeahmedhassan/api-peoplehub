@@ -12,6 +12,7 @@ import { verifyMailer } from "./config/mailer.js";
 import { notFound, errorHandler } from "./middleware/error/error.middleware.js";
 import { startAttendanceRollupJob } from "./jobs/attendance-rollup.job.js";
 import { requestTraceMiddleware } from "./middleware/observability/requestTrace.middleware.js";
+import { jsonCompressionMiddleware } from "./middleware/performance/compression.middleware.js";
 import { syncAllWorkspacesStorage } from "./services/workspace/plan.service.js";
 import { globalApiLimiter } from "./middleware/rateLimit/rateLimit.middleware.js";
 import { sanitizeObjectInPlace } from "./utils/security.js";
@@ -98,6 +99,7 @@ const corsOptions = {
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-device-key", "X-Requested-With", "Cache-Control"],
     exposedHeaders: ["Content-Disposition"],
+    maxAge: 86400,
     optionsSuccessStatus: 204,
 };
 
@@ -117,6 +119,7 @@ app.use((req, _res, next) => {
 });
 
 app.use(requestTraceMiddleware);
+app.use(jsonCompressionMiddleware);
 app.use(morgan(env.isProd ? "combined" : "dev"));
 
 app.use("/api/v1", globalApiLimiter, routes);

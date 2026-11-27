@@ -346,18 +346,31 @@ export async function getAttendanceSummary(userId, query) {
 // Automated Remote Employee Attendance Marking
 // -------------------------------------------------------------------
 
+const AUTO_MARK_REMOTE_TTL_MS = 5 * 60 * 1000;
+const recentAutoMarkCache = new Map();
+
 /**
  * Automatically mark attendance as "remote" for all active remote employees
  * in the workspace on a given date if they don't already have an attendance record.
  */
-export async function autoMarkRemoteAttendanceForWorkspace(workspaceId, targetDate = null) {
+export async function autoMarkRemoteAttendanceForWorkspace(workspaceId, targetDate = null, { force = false } = {}) {
     if (!workspaceId) return { marked: 0 };
+
+    const cacheKey = `${workspaceId}:${targetDate || "today"}`;
+    if (!force) {
+        const lastRun = recentAutoMarkCache.get(cacheKey);
+        if (lastRun && Date.now() - lastRun < AUTO_MARK_REMOTE_TTL_MS) {
+            return { marked: 0, cached: true };
+        }
+    }
 
     try {
         const workspace = await Workspace.findById(workspaceId).lean();
         if (!workspace) return { marked: 0 };
 
         const date = targetDate || getDateInTimezone(new Date(), workspace.timezone);
+        recentAutoMarkCache.set(`${workspaceId}:${targetDate || "today"}`, Date.now());
+        recentAutoMarkCache.set(`${workspaceId}:${date}`, Date.now());
         const weekendDays = workspace.attendance?.weekendDays ?? [0, 6];
         const holidays = workspace.attendance?.holidays ?? [];
         const holidayDates = new Set(holidays.map((h) => h.date));

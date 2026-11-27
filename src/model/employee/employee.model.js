@@ -339,6 +339,15 @@ employeeSchema.index(
     }
 );
 
+// Fast auth, workspace & listing lookups
+employeeSchema.index({ linkedUser: 1 });
+employeeSchema.index({ loginEmail: 1 });
+employeeSchema.index({ personalEmail: 1 });
+employeeSchema.index({ workEmail: 1 });
+employeeSchema.index({ workspace: 1, linkedUser: 1 });
+employeeSchema.index({ workspace: 1, loginEmail: 1 });
+employeeSchema.index({ workspace: 1, firstName: 1, lastName: 1 });
+
 employeeSchema.methods.toSafeJSON = function () {
     return {
         id: this._id,

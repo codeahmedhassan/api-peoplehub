@@ -529,4 +529,6 @@ workspaceSchema.methods.toSafeJSON = function () {
     };
 };
 
+workspaceSchema.index({ "members.user": 1 });
+
 export const Workspace = model("Workspace", workspaceSchema);
