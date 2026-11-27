@@ -84,12 +84,67 @@ export async function requireVerifiedUser(req, res, next) {
 }
 
 /**
+ * Evaluates whether a user satisfies a single module/action permission check.
+ */
+async function evaluateModulePermission({ module, action, isCEO, permissions, effectiveRole, emp, workspace }) {
+    if (module === "auditLogs") {
+        const { resolvePlanConfig } = await import("../../services/workspace/plan.service.js");
+        if (!resolvePlanConfig(workspace?.subscription).features?.auditLogs) {
+            return false;
+        }
+    }
+
+    if (isCEO) return true;
+
+    // If user has explicit permissions object for this module
+    if (permissions && typeof permissions === "object" && permissions[module] && typeof permissions[module] === "object") {
+        if (permissions[module][action] !== undefined) {
+            return Boolean(permissions[module][action]);
+        }
+        if (action === "view" && permissions[module].view !== undefined) {
+            return Boolean(permissions[module].view);
+        }
+        return false;
+    }
+
+    // Fallback to role presets:
+    // HR preset
+    const isHRPreset = /hr/.test(effectiveRole) || /hr|human resource/i.test(emp?.designation || "") || /hr|human resource/i.test(emp?.department || "");
+    if (isHRPreset) {
+        return true;
+    }
+
+    // Manager preset
+    if (/manager/.test(effectiveRole)) {
+        if (module === "dashboard" && action === "view") return true;
+        if (module === "employees" && action === "view") return true;
+        if (module === "attendance" && (action === "view" || action === "export")) return true;
+        if (module === "leave" && (action === "view" || action === "create" || action === "approve")) return true;
+        if (module === "performance") return true;
+        if (module === "documents" && (action === "view" || action === "upload")) return true;
+    }
+
+    // Viewer preset
+    if (/viewer/.test(effectiveRole)) {
+        if (action === "view" && module !== "auditLogs" && module !== "devices") return true;
+    }
+
+    // Employee self-service
+    if (module === "dashboard" && action === "view") return true;
+    if (module === "attendance" && action === "view") return true;
+    if (module === "leave" && (action === "view" || action === "create")) return true;
+
+    return false;
+}
+
+/**
  * Enforces dynamic role- and permission-based authorization on API endpoints.
+ * Allows access if the authenticated user satisfies ANY of the [module, action] checks.
  * - CEO / Workspace Owner: Unrestricted full system access.
  * - Custom / Explicit permissions: Follows permissions matrix for module & action.
  * - Standard role presets: Fallback based on effective role.
  */
-export function requirePermission(module, action = "view") {
+export function requireAnyPermission(checks = []) {
     return async function (req, res, next) {
         try {
             if (!req.userId) {
@@ -101,7 +156,6 @@ export function requirePermission(module, action = "view") {
                 return next(ApiError.unauthorized("User no longer exists"));
             }
 
-            // 1. Check if user is Workspace Owner or CEO or Administrator
             const { getWorkspaceForUser } = await import("../../services/workspace/workspace.service.js");
             const workspace = await getWorkspaceForUser(user._id);
 
@@ -114,13 +168,14 @@ export function requirePermission(module, action = "view") {
                 systemRoleStr === "admin"
             );
 
-            if (isCEO) {
+            // Fast-path CEO unless auditLogs plan gating applies
+            const hasAuditCheck = checks.some(([m]) => m === "auditLogs");
+            if (isCEO && !hasAuditCheck) {
                 req.user = user;
                 req.isCEO = true;
                 return next();
             }
 
-            // 2. Look up linked employee for dynamic permissions
             const { Employee } = await import("../../model/employee/employee.model.js");
             let emp = null;
             if (workspace) {
@@ -134,59 +189,36 @@ export function requirePermission(module, action = "view") {
                 }).select("permissions systemRole designation department").lean();
             }
 
-            // Merge permissions: employee permissions take precedence, then user permissions
             const permissions = (emp?.permissions && Object.keys(emp.permissions).length > 0) ? emp.permissions : (user.permissions || {});
             const effectiveRole = String(emp?.systemRole || user.systemRole || user.role || "Employee").toLowerCase().trim();
 
-            // If user has explicit permissions object for this module
-            if (permissions && typeof permissions === "object" && permissions[module] && typeof permissions[module] === "object") {
-                if (permissions[module][action] !== undefined) {
-                    if (permissions[module][action]) {
-                        req.user = user;
-                        return next();
-                    } else {
-                        return next(ApiError.forbidden("You don't have permission to access that resource"));
-                    }
-                }
-                if (action === "view" && permissions[module].view) {
+            for (const [module, action = "view"] of checks) {
+                const allowed = await evaluateModulePermission({
+                    module,
+                    action,
+                    isCEO,
+                    permissions,
+                    effectiveRole,
+                    emp,
+                    workspace,
+                });
+                if (allowed) {
                     req.user = user;
+                    if (isCEO) req.isCEO = true;
                     return next();
                 }
-                // Explicitly defined module without the required action
-                return next(ApiError.forbidden("You don't have permission to access that resource"));
             }
-
-            // Fallback to role presets:
-            // HR preset
-            const isHRPreset = /hr/.test(effectiveRole) || /hr|human resource/i.test(emp?.designation || "") || /hr|human resource/i.test(emp?.department || "");
-            if (isHRPreset) {
-                req.user = user;
-                return next();
-            }
-
-            // Manager preset
-            if (/manager/.test(effectiveRole)) {
-                if (module === "dashboard" && action === "view") return next();
-                if (module === "employees" && action === "view") return next();
-                if (module === "attendance" && (action === "view" || action === "export")) return next();
-                if (module === "leave" && (action === "view" || action === "create" || action === "approve")) return next();
-                if (module === "performance") return next();
-                if (module === "documents" && (action === "view" || action === "upload")) return next();
-            }
-
-            // Viewer preset
-            if (/viewer/.test(effectiveRole)) {
-                if (action === "view" && module !== "auditLogs") return next();
-            }
-
-            // Employee self-service
-            if (module === "dashboard" && action === "view") return next();
-            if (module === "attendance" && action === "view") return next();
-            if (module === "leave" && (action === "view" || action === "create")) return next();
 
             return next(ApiError.forbidden("You don't have permission to access that resource"));
         } catch (err) {
             return next(err);
         }
     };
+}
+
+/**
+ * Single module/action permission guard.
+ */
+export function requirePermission(module, action = "view") {
+    return requireAnyPermission([[module, action]]);
 }

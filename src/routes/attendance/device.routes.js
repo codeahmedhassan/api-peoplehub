@@ -6,19 +6,52 @@ import {
     getDeviceLinks,
     saveDeviceLink,
 } from "../../controllers/attendance/device.controller.js";
-import { requireAuth, requirePermission } from "../../middleware/auth/auth.middleware.js";
+import { requireAuth, requirePermission, requireAnyPermission } from "../../middleware/auth/auth.middleware.js";
 import { validate } from "../../middleware/validate/validate.middleware.js";
 import { createDeviceSchema, saveLinkSchema } from "../../validators/attendance/device.validator.js";
 
 const router = Router();
 
-router.use(requireAuth, requirePermission("attendance", "edit"));
+router.use(requireAuth);
 
-router.get("/", getDevices);
-router.post("/", validate(createDeviceSchema), createDevice);
-router.delete("/:id", revokeDevice);
+router.get(
+    "/",
+    requireAnyPermission([
+        ["devices", "view"],
+        ["employees", "create"],
+        ["employees", "edit"],
+        ["attendance", "view"],
+    ]),
+    getDevices
+);
+router.post(
+    "/",
+    requireAnyPermission([
+        ["devices", "create"],
+        ["devices", "manage"],
+    ]),
+    validate(createDeviceSchema),
+    createDevice
+);
+router.delete(
+    "/:id",
+    requirePermission("devices", "manage"),
+    revokeDevice
+);
 
-router.get("/:id/links", getDeviceLinks);
-router.post("/:id/links", validate(saveLinkSchema), saveDeviceLink);
+router.get(
+    "/:id/links",
+    requireAnyPermission([
+        ["devices", "view"],
+        ["devices", "manage"],
+    ]),
+    getDeviceLinks
+);
+router.post(
+    "/:id/links",
+    requirePermission("devices", "manage"),
+    validate(saveLinkSchema),
+    saveDeviceLink
+);
 
 export default router;

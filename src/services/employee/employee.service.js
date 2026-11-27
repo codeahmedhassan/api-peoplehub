@@ -158,6 +158,20 @@ export function callerHasFullAccess(callerUser, workspace, callerEmployee = null
 }
 
 /**
+ * Strips module permissions that are unavailable under the workspace's subscription plan
+ * or that the caller lacks authority to grant.
+ */
+export function sanitizeAssignedPermissions(rawPermissions, { hasFullAccess = false, workspace = null } = {}) {
+    if (!rawPermissions || typeof rawPermissions !== "object") return {};
+    const sanitized = { ...rawPermissions };
+    const planConfig = resolvePlanConfig(workspace?.subscription);
+    if (!hasFullAccess || !planConfig.features?.auditLogs) {
+        delete sanitized.auditLogs;
+    }
+    return sanitized;
+}
+
+/**
  * Calculates or falls back to actual hours logged for an attendance record.
  */
 export function calculateRecordHours(rec, defaultRequiredHours = 8) {
@@ -1175,10 +1189,7 @@ export async function createEmployee(userId, body, files = []) {
     // -------------------------------------------------------------------
     const callerUser = await User.findById(userId).lean();
     const hasFullAccess = callerHasFullAccess(callerUser, workspace);
-    let assignedPermissions = (body.createLogin && body.permissions) ? { ...body.permissions } : (body.permissions ? { ...body.permissions } : {});
-    if (!hasFullAccess && assignedPermissions.auditLogs) {
-        delete assignedPermissions.auditLogs;
-    }
+    const assignedPermissions = sanitizeAssignedPermissions(body.permissions, { hasFullAccess, workspace });
 
     let linkedUser = null;
     let inviteToken = null;
@@ -2169,7 +2180,13 @@ export async function updateEmployee(userId, idOrEmployeeId, patch) {
     setField("education");
     setField("experience");
     setField("certificates");
-    setField("permissions");
+    if (patch.permissions !== undefined) {
+        const sanitizedPerms = sanitizeAssignedPermissions(patch.permissions, {
+            hasFullAccess: callerHasFullAccess(caller, workspace),
+            workspace,
+        });
+        employee.permissions = sanitizedPerms;
+    }
 
     await employee.save();
 
@@ -2185,7 +2202,7 @@ export async function updateEmployee(userId, idOrEmployeeId, patch) {
     if (employee.linkedUser && (patch.permissions !== undefined || patch.systemRole !== undefined)) {
         try {
             const userUpdate = {};
-            if (patch.permissions !== undefined) userUpdate.permissions = patch.permissions;
+            if (patch.permissions !== undefined) userUpdate.permissions = employee.permissions;
             if (patch.systemRole !== undefined) {
                 userUpdate.systemRole = patch.systemRole;
                 userUpdate.role = patch.systemRole;
@@ -4042,10 +4059,10 @@ export async function createEmployeeLoginAccount(userId, idOrEmployeeId, body = 
 
     const targetRole = body.systemRole || employee.systemRole || "Employee";
     const hasFullAccess = callerHasFullAccess(caller, workspace);
-    let perms = body.permissions ? { ...body.permissions } : (employee.permissions ? { ...employee.permissions } : {});
-    if (!hasFullAccess && perms.auditLogs) {
-        delete perms.auditLogs;
-    }
+    const perms = sanitizeAssignedPermissions(
+        body.permissions || employee.permissions || {},
+        { hasFullAccess, workspace }
+    );
 
     const newUser = await User.create({
         fullName: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -4246,11 +4263,7 @@ export async function updateEmployeePermissions(userId, idOrEmployeeId, body = {
         employee.systemRole = body.systemRole;
     }
     if (body.permissions !== undefined) {
-        let perms = { ...body.permissions };
-        if (!hasFullAccess && perms.auditLogs) {
-            delete perms.auditLogs;
-        }
-        employee.permissions = perms;
+        employee.permissions = sanitizeAssignedPermissions(body.permissions, { hasFullAccess, workspace });
     }
     await employee.save();
 

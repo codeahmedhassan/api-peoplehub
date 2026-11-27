@@ -109,8 +109,10 @@ async function enrichUserWithWorkspace(user) {
     const safe = user.toSafeJSON();
     try {
         const { getWorkspaceForUser } = await import("../../services/workspace/workspace.service.js");
+        const { resolvePlanConfig } = await import("../../services/workspace/plan.service.js");
         const ws = await getWorkspaceForUser(user._id);
         if (ws) {
+            const planCfg = resolvePlanConfig(ws.subscription);
             safe.workspace = {
                 id: ws._id.toString(),
                 companyName: ws.companyName,
@@ -120,6 +122,12 @@ async function enrichUserWithWorkspace(user) {
                 accessRevoked: Boolean(ws.accessRevoked),
                 accessRevokedAt: ws.accessRevokedAt || null,
                 accessRevokedReason: ws.accessRevokedReason || "",
+                subscription: {
+                    plan: planCfg.plan,
+                    planName: planCfg.planName,
+                    isPaid: Boolean(planCfg.isPaid),
+                    features: planCfg.features || {},
+                },
             };
 
             const isOwner = Boolean(ws.owner && ws.owner.toString() === user._id.toString());
