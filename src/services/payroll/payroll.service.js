@@ -33,7 +33,7 @@ const DEFAULT_WORKSPACE_COMPONENTS = [
         includeInOvertime: true,
         showOnPayslip: true,
         frequency: "monthly",
-        status: "inactive",
+        status: "active",
         isSystem: true,
     },
     {
@@ -405,6 +405,13 @@ export async function getComponents(workspaceId) {
         }));
         await SalaryComponent.insertMany(seedPayload);
         comps = await SalaryComponent.find({ workspace: workspaceId }).sort({ createdAt: 1 });
+    } else {
+        // Ensure system Basic Salary is always enabled
+        const inactiveBasic = comps.find((c) => c.code === "BASIC" && c.isSystem && c.status !== "active");
+        if (inactiveBasic) {
+            inactiveBasic.status = "active";
+            await inactiveBasic.save();
+        }
     }
 
     return comps;
@@ -440,14 +447,19 @@ export async function createComponent(workspaceId, data) {
 }
 
 export async function updateComponent(workspaceId, id, patch) {
+    const existing = await SalaryComponent.findOne({ _id: id, workspace: workspaceId });
+    if (!existing) {
+        throw ApiError.notFound("Salary component not found.");
+    }
+    if (existing.isSystem && patch.status === "inactive") {
+        throw ApiError.badRequest("Basic Salary cannot be disabled.");
+    }
+
     const comp = await SalaryComponent.findOneAndUpdate(
         { _id: id, workspace: workspaceId },
         { ...patch, ...(patch.code ? { code: patch.code.toUpperCase() } : {}) },
         { new: true, runValidators: true }
     );
-    if (!comp) {
-        throw ApiError.notFound("Salary component not found.");
-    }
     return comp;
 }
 
@@ -468,12 +480,20 @@ export async function resetComponents(workspaceId) {
     const existingBasic = await SalaryComponent.findOne({ workspace: workspaceId, code: "BASIC" });
     if (!existingBasic) {
         await SalaryComponent.deleteMany({ workspace: workspaceId });
+    } else if (existingBasic.status !== "active") {
+        existingBasic.status = "active";
+        await existingBasic.save();
     }
-    const seedPayload = DEFAULT_WORKSPACE_COMPONENTS.map((item) => ({
+    const itemsToSeed = existingBasic
+        ? DEFAULT_WORKSPACE_COMPONENTS.filter((item) => item.code !== "BASIC")
+        : DEFAULT_WORKSPACE_COMPONENTS;
+    const seedPayload = itemsToSeed.map((item) => ({
         ...item,
         workspace: workspaceId,
     }));
-    await SalaryComponent.insertMany(seedPayload);
+    if (seedPayload.length > 0) {
+        await SalaryComponent.insertMany(seedPayload);
+    }
     return SalaryComponent.find({ workspace: workspaceId }).sort({ createdAt: 1 });
 }
 
