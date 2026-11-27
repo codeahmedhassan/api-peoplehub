@@ -31,6 +31,7 @@ import {
     loginIpLimiter,
     loginEmailLimiter,
     authChallengeLimiter,
+    refreshLimiter,
 } from "../../middleware/rateLimit/rateLimit.middleware.js";
 import {
     signupSchema,
@@ -79,7 +80,7 @@ router.get("/session", sessionController);
 router.get("/sessions", requireAuth, getSessionsController);
 
 router.post("/logout", logoutController);
-router.post("/refresh", authChallengeLimiter, refreshController);
+router.post("/refresh", refreshLimiter, refreshController);
 router.post("/invite/verify", authChallengeLimiter, verifyInviteController);
 router.post("/invite/accept", authChallengeLimiter, acceptInviteController);
 router.post("/forgot-password", resendLimiter, validate(forgotPasswordSchema), forgotPasswordController);

@@ -115,11 +115,15 @@ const employeeIdConfigSchema = new Schema(
     {
         formatType: {
             type: String,
-            default: "prefix_number",
+            default: "branch_number",
         },
         components: {
             type: [String],
-            default: ["prefix", "number"],
+            default: ["branch", "number"],
+        },
+        formatExplicitlySet: {
+            type: Boolean,
+            default: false,
         },
         prefix: { type: String, default: "EMP", trim: true },
         separator: { type: String, default: "-", trim: true },

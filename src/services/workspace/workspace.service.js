@@ -1148,11 +1148,17 @@ export async function getEmployeeIdSettings(userId) {
         ...(rawConfig.departmentCodes || {}),
     };
 
+    const useBranchDefault =
+        !rawConfig.formatExplicitlySet &&
+        (!rawConfig.formatType || rawConfig.formatType === "prefix_number");
+
     const settings = {
-        formatType: rawConfig.formatType || "prefix_number",
-        components: Array.isArray(rawConfig.components) && rawConfig.components.length > 0
+        formatType: useBranchDefault ? "branch_number" : (rawConfig.formatType || "branch_number"),
+        components: useBranchDefault
+            ? ["branch", "number"]
+            : Array.isArray(rawConfig.components) && rawConfig.components.length > 0
             ? rawConfig.components
-            : ["prefix", "number"],
+            : ["branch", "number"],
         prefix: rawConfig.prefix !== undefined ? rawConfig.prefix : "EMP",
         separator: rawConfig.separator !== undefined ? rawConfig.separator : "-",
         yearFormat: rawConfig.yearFormat || "2_digit",
@@ -1225,9 +1231,11 @@ export async function updateEmployeeIdSettings(userId, patch) {
 
     if (patch.formatType !== undefined) {
         workspace.employeeIdConfig.formatType = String(patch.formatType);
+        workspace.employeeIdConfig.formatExplicitlySet = true;
     }
     if (patch.components !== undefined && Array.isArray(patch.components)) {
         workspace.employeeIdConfig.components = patch.components.map(String);
+        workspace.employeeIdConfig.formatExplicitlySet = true;
     }
     if (patch.prefix !== undefined) {
         workspace.employeeIdConfig.prefix = String(patch.prefix).trim();

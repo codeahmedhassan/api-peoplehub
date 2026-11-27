@@ -967,9 +967,15 @@ export async function nextEmployeeId(workspaceId, options = {}) {
     const branchMap = { ...DEFAULT_BRANCH_CODES, ...rawBranchMap };
     const deptMap = { ...DEFAULT_DEPT_CODES, ...rawDeptMap };
 
-    const components = Array.isArray(config.components) && config.components.length > 0
+    const useBranchDefault =
+        !config.formatExplicitlySet &&
+        (!config.formatType || config.formatType === "prefix_number");
+
+    const components = useBranchDefault
+        ? ["branch", "number"]
+        : Array.isArray(config.components) && config.components.length > 0
         ? config.components
-        : ["prefix", "number"];
+        : ["branch", "number"];
 
     const buildId = (s) => {
         const parts = [];
