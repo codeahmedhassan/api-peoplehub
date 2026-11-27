@@ -45,6 +45,11 @@ export const createDevice = asyncHandler(async (req, res) => {
         apiKeyPrefix: prefix + "••••",
     });
 
+    await Workspace.updateOne(
+        { _id: workspace._id },
+        { $addToSet: { onboardingCompletedTasks: "security" } }
+    );
+
     return res.status(201).json(new ApiResponse(201, {
         device: {
             id: device._id,

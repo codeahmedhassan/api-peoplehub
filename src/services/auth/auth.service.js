@@ -363,6 +363,19 @@ export async function toggleTwoFactor(userId, enabled) {
     user.twoFactorAttempts = 0;
     await user.save();
 
+    if (user.twoFactorEnabled) {
+        try {
+            const { getWorkspaceForUser, markOnboardingTaskDone } = await import("../workspace/workspace.service.js");
+            const ws = await getWorkspaceForUser(user._id);
+            if (ws) {
+                markOnboardingTaskDone(ws, "security");
+                await ws.save();
+            }
+        } catch {
+            // non-fatal onboarding progress update
+        }
+    }
+
     return { twoFactorEnabled: user.twoFactorEnabled };
 }
 

@@ -266,6 +266,10 @@ const workspaceSchema = new Schema(
             type: Boolean,
             default: false,
         },
+        onboardingCompletedTasks: {
+            type: [String],
+            default: [],
+        },
         rejectionReason: {
             type: String,
             default: "",
@@ -431,6 +435,9 @@ workspaceSchema.methods.toSafeJSON = function () {
             ? this.employmentTypes
             : ["Full Time", "Part Time", "Remote Job"],
         onboardingDismissed: Boolean(this.onboardingDismissed),
+        onboardingCompletedTasks: Array.isArray(this.onboardingCompletedTasks)
+            ? this.onboardingCompletedTasks
+            : [],
         payrollCycle: this.payrollCycle || "Monthly (Last day of month)",
         ceoFullControlWithHr: this.ceoFullControlWithHr !== undefined ? Boolean(this.ceoFullControlWithHr) : true,
         verificationStatus: this.verificationStatus || "approved",

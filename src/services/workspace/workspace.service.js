@@ -109,15 +109,26 @@ async function assertWorkspaceAdminAuthority(userId, workspace, { requireCeo = f
     return { isCEO, isHR };
 }
 
+const VALID_ONBOARDING_TASKS = new Set(["company", "currency", "attendance", "employee-id", "security"]);
+
+export function markOnboardingTaskDone(workspace, taskId) {
+    if (!workspace || !VALID_ONBOARDING_TASKS.has(taskId)) return;
+    const current = Array.isArray(workspace.onboardingCompletedTasks) ? workspace.onboardingCompletedTasks : [];
+    if (!current.includes(taskId)) {
+        workspace.onboardingCompletedTasks = [...current, taskId];
+    }
+}
+
 export async function updateCompanyProfile(userId, patch) {
     const workspace = await getWorkspaceOrThrow(userId);
     const { isCEO } = await assertWorkspaceAdminAuthority(userId, workspace);
 
-    if (patch.companyName !== undefined) workspace.companyName = String(patch.companyName).trim();
-    if (patch.industry !== undefined) workspace.industry = patch.industry;
-    if (patch.timezone !== undefined) workspace.timezone = patch.timezone;
-    if (patch.logo !== undefined) workspace.logo = patch.logo;
-    if (patch.teamSize !== undefined) workspace.teamSize = patch.teamSize;
+    let updatedCompanyDetails = false;
+    if (patch.companyName !== undefined) { workspace.companyName = String(patch.companyName).trim(); updatedCompanyDetails = true; }
+    if (patch.industry !== undefined) { workspace.industry = patch.industry; updatedCompanyDetails = true; }
+    if (patch.timezone !== undefined) { workspace.timezone = patch.timezone; updatedCompanyDetails = true; }
+    if (patch.logo !== undefined) { workspace.logo = patch.logo; updatedCompanyDetails = true; }
+    if (patch.teamSize !== undefined) { workspace.teamSize = patch.teamSize; updatedCompanyDetails = true; }
     if (patch.ceoFullControlWithHr !== undefined) {
         if (!isCEO) {
             throw ApiError.forbidden("Only the Founder / CEO can modify CEO operational override settings.");
@@ -136,6 +147,17 @@ export async function updateCompanyProfile(userId, patch) {
     }
     if (patch.onboardingDismissed !== undefined) {
         workspace.onboardingDismissed = Boolean(patch.onboardingDismissed);
+    }
+    if (patch.completeOnboardingTask !== undefined) {
+        markOnboardingTaskDone(workspace, String(patch.completeOnboardingTask));
+    }
+    if (Array.isArray(patch.onboardingCompletedTasks)) {
+        workspace.onboardingCompletedTasks = Array.from(
+            new Set(patch.onboardingCompletedTasks.map(String).filter((t) => VALID_ONBOARDING_TASKS.has(t)))
+        );
+    }
+    if (updatedCompanyDetails) {
+        markOnboardingTaskDone(workspace, "company");
     }
 
     await workspace.save();
@@ -219,6 +241,7 @@ export async function updateFinancialSettings(userId, patch) {
         workspace.taxId = String(patch.taxId).trim();
     }
 
+    markOnboardingTaskDone(workspace, "currency");
     await workspace.save();
     calculateWorkspaceStorageBytes(workspace._id).catch(() => {});
     return workspace;
@@ -374,6 +397,7 @@ export async function updateAttendanceSettings(userId, patch) {
     }
 
     workspace.markModified("attendance");
+    markOnboardingTaskDone(workspace, "attendance");
     await workspace.save();
 
     // Notify all managers via In-App and Email notifications if weekends or holidays changed
@@ -1234,6 +1258,7 @@ export async function updateEmployeeIdSettings(userId, patch) {
     }
 
     workspace.markModified("employeeIdConfig");
+    markOnboardingTaskDone(workspace, "employee-id");
     await workspace.save();
 
     return await getEmployeeIdSettings(userId);
